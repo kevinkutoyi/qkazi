@@ -1,0 +1,247 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { Role, VerificationStatus } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
+import FavoriteButton from "@/components/FavoriteButton";
+import MapPreview from "@/components/MapPreview";
+import {
+  formatBlockRange,
+  readWorkingHours,
+  summarizeWorkingHours,
+} from "@/lib/availability";
+
+export const dynamic = "force-dynamic";
+
+export default async function TaskerProfilePage({
+  params,
+}: {
+  params: { id: string };
+}) {
+  const [tasker, current] = await Promise.all([
+    prisma.user.findFirst({
+      where: { id: params.id, role: Role.TASKER },
+      select: {
+        id: true,
+        name: true,
+        createdAt: true,
+        taskerProfile: {
+          select: {
+            id: true,
+            bio: true,
+            hourlyRate: true,
+            location: true,
+            latitude: true,
+            longitude: true,
+            skills: true,
+            photoUrl: true,
+            verificationStatus: true,
+            onboardingCompletedAt: true,
+            ratingAvg: true,
+            ratingCount: true,
+            workingHours: true,
+          },
+        },
+      },
+    }),
+    getCurrentUser(),
+  ]);
+  if (!tasker || !tasker.taskerProfile) notFound();
+
+  // Upcoming time-off blocks (today onward, up to 5).
+  const todayUtc = new Date();
+  todayUtc.setUTCHours(0, 0, 0, 0);
+  const upcomingTimeOff = await prisma.availabilityBlock.findMany({
+    where: {
+      profileId: tasker.taskerProfile.id,
+      endDate: { gte: todayUtc },
+    },
+    orderBy: { startDate: "asc" },
+    take: 5,
+  });
+
+  const workingHours = readWorkingHours(tasker.taskerProfile.workingHours);
+  const hoursSummary = summarizeWorkingHours(workingHours);
+
+  const profile = tasker.taskerProfile;
+  const isApproved = profile.verificationStatus === VerificationStatus.APPROVED;
+
+  // Is this tasker already in the viewing customer's favorites?
+  let isFavorited = false;
+  if (current?.role === Role.CUSTOMER) {
+    const fav = await prisma.favorite.findUnique({
+      where: {
+        customerId_taskerId: {
+          customerId: current.sub,
+          taskerId: tasker.id,
+        },
+      },
+      select: { id: true },
+    });
+    isFavorited = Boolean(fav);
+  }
+
+  return (
+    <article className="mx-auto max-w-2xl space-y-6">
+      <div>
+        <Link href="/taskers" className="text-sm text-brand-700 hover:underline">
+          ← Back to taskers
+        </Link>
+      </div>
+      <div className="card p-6">
+        <div className="flex items-start gap-4">
+          {profile.photoUrl ? (
+            <img
+              src={profile.photoUrl}
+              alt={tasker.name}
+              className="h-20 w-20 shrink-0 rounded-full object-cover"
+            />
+          ) : (
+            <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-full bg-brand-100 text-xl font-semibold text-brand-700">
+              {tasker.name
+                .split(/\s+/)
+                .slice(0, 2)
+                .map((p) => p[0]?.toUpperCase() ?? "")
+                .join("")}
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl font-bold">{tasker.name}</h1>
+              {isApproved ? (
+                <span
+                  className="badge bg-brand-100 text-brand-700"
+                  title="Identity verified by Qkazi"
+                >
+                  ✓ Verified
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-1 text-sm text-gray-500">
+              {profile.location ?? "Location unset"}
+              {profile.ratingCount > 0 ? (
+                <>
+                  {" · "}
+                  <span title={`${profile.ratingCount} reviews`}>
+                    ★ {profile.ratingAvg.toFixed(1)} ({profile.ratingCount})
+                  </span>
+                </>
+              ) : null}
+            </p>
+          </div>
+          <div className="flex flex-col items-end gap-2">
+            <span className="text-lg font-semibold text-gray-900">
+              KSh {profile.hourlyRate}/hr
+            </span>
+            {current?.role === Role.CUSTOMER ? (
+              <FavoriteButton
+                taskerId={tasker.id}
+                initialFavorited={isFavorited}
+              />
+            ) : null}
+          </div>
+        </div>
+
+        {profile.skills.length ? (
+          <div className="mt-5 flex flex-wrap gap-1">
+            {profile.skills.map((s) => (
+              <span key={s} className="badge bg-brand-50 text-brand-700">
+                {s}
+              </span>
+            ))}
+          </div>
+        ) : null}
+
+        {profile.bio ? (
+          <p className="mt-6 whitespace-pre-line text-gray-800">
+            {profile.bio}
+          </p>
+        ) : (
+          <p className="mt-6 text-sm text-gray-500">
+            This tasker hasn&apos;t added a bio yet.
+          </p>
+        )}
+
+        <section className="mt-6">
+          <h2 className="text-sm font-semibold text-gray-900">Availability</h2>
+          <p className="mt-2 text-sm text-gray-700">{hoursSummary}</p>
+          {upcomingTimeOff.length > 0 ? (
+            <div className="mt-3">
+              <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                Unavailable
+              </p>
+              <ul className="mt-1 space-y-1 text-xs text-gray-700">
+                {upcomingTimeOff.map((b) => (
+                  <li key={b.id}>
+                    {formatBlockRange(b.startDate, b.endDate)}
+                    {b.reason ? (
+                      <span className="text-gray-500"> — {b.reason}</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </section>
+
+        {profile.latitude != null && profile.longitude != null ? (
+          <section className="mt-6">
+            <h2 className="text-sm font-semibold text-gray-900">Service area</h2>
+            <div className="mt-3">
+              <MapPreview
+                lat={profile.latitude}
+                lng={profile.longitude}
+                label={profile.location ?? undefined}
+                height={180}
+              />
+            </div>
+          </section>
+        ) : null}
+
+        <p className="mt-6 text-xs text-gray-500">
+          Member since {new Date(tasker.createdAt).toLocaleDateString()}
+        </p>
+      </div>
+
+      <RecentReviews taskerUserId={tasker.id} />
+    </article>
+  );
+}
+
+async function RecentReviews({ taskerUserId }: { taskerUserId: string }) {
+  const reviews = await prisma.review.findMany({
+    where: { subjectId: taskerUserId },
+    orderBy: { createdAt: "desc" },
+    take: 6,
+    include: {
+      author: { select: { id: true, name: true } },
+      booking: { select: { task: { select: { id: true, title: true } } } },
+    },
+  });
+  if (reviews.length === 0) return null;
+  return (
+    <section className="card p-6">
+      <h2 className="text-base font-semibold">Recent reviews</h2>
+      <ul className="mt-4 space-y-4">
+        {reviews.map((r) => (
+          <li key={r.id} className="border-t border-gray-100 pt-4 first:border-0 first:pt-0">
+            <div className="flex items-center gap-1 text-yellow-500" aria-label={`${r.rating} of 5 stars`}>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <span key={i} aria-hidden="true">
+                  {i < r.rating ? "★" : "☆"}
+                </span>
+              ))}
+            </div>
+            {r.comment ? (
+              <p className="mt-2 text-sm text-gray-700">“{r.comment}”</p>
+            ) : null}
+            <p className="mt-2 text-xs text-gray-500">
+              {r.author.name} · {r.booking.task.title} ·{" "}
+              {new Date(r.createdAt).toLocaleDateString()}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}

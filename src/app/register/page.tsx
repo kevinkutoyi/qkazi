@@ -1,0 +1,207 @@
+"use client";
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import GoogleButton from "@/components/GoogleButton";
+
+type Role = "CUSTOMER" | "TASKER";
+
+export default function RegisterPage() {
+  const router = useRouter();
+  const [role, setRole] = useState<Role>("CUSTOMER");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [hourlyRate, setHourlyRate] = useState("");
+  const [location, setLocation] = useState("");
+  const [skills, setSkills] = useState("");
+  const [bio, setBio] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      const payload: Record<string, unknown> = { email, password, name, role };
+      if (role === "TASKER") {
+        payload.hourlyRate = Number(hourlyRate);
+        payload.location = location || undefined;
+        payload.bio = bio || undefined;
+        payload.skills = skills
+          ? skills
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : [];
+      }
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Registration failed");
+        return;
+      }
+      // No session is set yet — the user must confirm their email first.
+      const params = new URLSearchParams({ email });
+      router.push(`/verify-email?${params.toString()}`);
+    } catch {
+      setError("Network error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-lg">
+      <h1 className="text-2xl font-bold">Create your account</h1>
+
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        {(["CUSTOMER", "TASKER"] as Role[]).map((r) => (
+          <button
+            key={r}
+            type="button"
+            onClick={() => setRole(r)}
+            className={`rounded-md border px-4 py-3 text-sm font-medium transition ${
+              role === r
+                ? "border-brand-600 bg-brand-50 text-brand-700"
+                : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+            }`}
+          >
+            {r === "CUSTOMER"
+              ? "I want to hire (Customer)"
+              : "I want to work (Tasker)"}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-6">
+        <GoogleButton
+          label={`Continue with Google as ${role === "CUSTOMER" ? "Customer" : "Tasker"}`}
+          role={role}
+        />
+        <p className="mt-2 text-xs text-gray-500">
+          Google sign-up skips email confirmation.
+        </p>
+        <div className="relative my-4 text-center text-xs text-gray-400">
+          <span className="absolute inset-y-1/2 left-0 right-0 -z-10 h-px bg-gray-200" />
+          <span className="bg-gray-50 px-2">or with email</span>
+        </div>
+      </div>
+
+      <form onSubmit={onSubmit} className="space-y-4">
+        <div>
+          <label className="label" htmlFor="name">
+            Full name
+          </label>
+          <input
+            id="name"
+            required
+            className="input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="label" htmlFor="email">
+            Email
+          </label>
+          <input
+            id="email"
+            type="email"
+            required
+            className="input"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="label" htmlFor="password">
+            Password
+          </label>
+          <input
+            id="password"
+            type="password"
+            required
+            minLength={8}
+            className="input"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <p className="mt-1 text-xs text-gray-500">At least 8 characters.</p>
+        </div>
+
+        {role === "TASKER" ? (
+          <>
+            <div>
+              <label className="label" htmlFor="rate">
+                Hourly rate (KSh)
+              </label>
+              <input
+                id="rate"
+                type="number"
+                min={1}
+                required
+                className="input"
+                value={hourlyRate}
+                onChange={(e) => setHourlyRate(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="location">
+                Location
+              </label>
+              <input
+                id="location"
+                className="input"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="City or neighborhood"
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="skills">
+                Skills
+              </label>
+              <input
+                id="skills"
+                className="input"
+                value={skills}
+                onChange={(e) => setSkills(e.target.value)}
+                placeholder="Cleaning, Moving, Plumbing (comma separated)"
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="bio">
+                Short bio
+              </label>
+              <textarea
+                id="bio"
+                className="input min-h-[80px]"
+                value={bio}
+                onChange={(e) => setBio(e.target.value)}
+              />
+            </div>
+          </>
+        ) : null}
+
+        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        <button type="submit" className="btn-primary w-full" disabled={loading}>
+          {loading ? "Creating account…" : "Create account"}
+        </button>
+      </form>
+
+      <p className="mt-4 text-sm text-gray-600">
+        Already have an account?{" "}
+        <Link className="text-brand-700 hover:underline" href="/login">
+          Log in
+        </Link>
+      </p>
+    </div>
+  );
+}

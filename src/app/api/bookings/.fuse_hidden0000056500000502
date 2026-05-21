@@ -1,0 +1,133 @@
+import { NextResponse } from "next/server";
+import { z } from "zod";
+import {
+  BookingStatus,
+  NotificationType,
+  Role,
+  TaskStatus,
+} from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import { jsonError, parseBody, requireAuth } from "@/lib/api-utils";
+import { publish, OfferEvent } from "@/lib/offer-events";
+import { notify } from "@/lib/notifications";
+
+const createBookingSchema = z.object({
+  taskId: z.string().min(1),
+  message: z.string().max(1000).optional(),
+  scheduledAt: z.string().datetime().optional(),
+  // Bid: tasker's proposed price (dollars, integer ≥ 1) and time estimate
+  // in minutes (≥ 5, ≤ 30 days). Price is required for new offers; we'll
+  // default it to the task budget client-side if the tasker leaves it blank.
+  priceCents: z.number().int().positive(),
+  estimatedMinutes: z.number().int().min(5).max(60 * 24 * 30).optional(),
+});
+
+/**
+ * GET /api/bookings
+ *   - Taskers see their own bookings (their offers/jobs).
+ *   - Customers see bookings on tasks they posted.
+ */
+export async function GET() {
+  const auth = await requireAuth();
+  if ("error" in auth) return auth.error;
+
+  if (auth.user.role === Role.TASKER) {
+    const bookings = await prisma.booking.findMany({
+      where: { taskerId: auth.user.sub },
+      include: {
+        task: {
+          include: { customer: { select: { id: true, name: true } } },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    return NextResponse.json({ bookings });
+  }
+
+  const bookings = await prisma.booking.findMany({
+    where: { task: { customerId: auth.user.sub } },
+    include: {
+      task: true,
+      tasker: {
+        select: {
+          id: true,
+          name: true,
+          taskerProfile: {
+            select: { hourlyRate: true, location: true, skills: true },
+          },
+        },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  return NextResponse.json({ bookings });
+}
+
+/**
+ * POST /api/bookings — a tasker bids on an open task.
+ * Body: { taskId, priceCents, estimatedMinutes?, message?, scheduledAt? }
+ */
+export async function POST(req: Request) {
+  const auth = await requireAuth([Role.TASKER]);
+  if ("error" in auth) return auth.error;
+
+  const parsed = await parseBody(req, createBookingSchema);
+  if ("error" in parsed) return parsed.error;
+  const { taskId, message, scheduledAt, priceCents, estimatedMinutes } =
+    parsed.data;
+
+  const task = await prisma.task.findUnique({ where: { id: taskId } });
+  if (!task) return jsonError("Task not found", 404);
+  if (task.status !== TaskStatus.OPEN) {
+    return jsonError("Task is no longer accepting offers", 409);
+  }
+
+  const booking = await prisma.booking
+    .create({
+      data: {
+        taskId,
+        taskerId: auth.user.sub,
+        status: BookingStatus.PENDING,
+        message: message ?? null,
+        scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
+        priceCents,
+        estimatedMinutes: estimatedMinutes ?? null,
+      },
+    })
+    .catch((err) => {
+      if (err?.code === "P2002") return null; // unique violation
+      throw err;
+    });
+
+  if (!booking) {
+    return jsonError("You have already offered on this task", 409);
+  }
+
+  // Notify the task owner's live offer feed.
+  const event: OfferEvent = {
+    type: "new-offer",
+    bookingId: booking.id,
+    taskerId: booking.taskerId,
+    priceCents: booking.priceCents,
+    estimatedMinutes: booking.estimatedMinutes,
+    message: booking.message,
+    createdAt: booking.createdAt.toISOString(),
+  };
+  publish(taskId, event);
+
+  // Bell ping to the customer who owns the task.
+  notify({
+    userId: task.customerId,
+    type: NotificationType.NEW_OFFER,
+    title: `New offer on "${task.title}"`,
+    body: priceCents
+      ? `Bid KSh ${(priceCents / 100).toFixed(0)}${message ? ` — "${message.slice(0, 80)}"` : ""}`
+      : message
+        ? `"${message.slice(0, 100)}"`
+        : undefined,
+    url: `/tasks/${taskId}`,
+    data: { taskId, bookingId: booking.id, taskerId: booking.taskerId },
+  });
+
+  return NextResponse.json({ booking }, { status: 201 });
+}

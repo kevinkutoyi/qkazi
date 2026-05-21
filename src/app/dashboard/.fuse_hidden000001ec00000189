@@ -1,0 +1,1143 @@
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import {
+  BookingStatus,
+  PaymentStatus,
+  Role,
+  TaskStatus,
+  VerificationStatus,
+} from "@prisma/client";
+import { getCurrentUser } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { profileCompleteness } from "@/lib/profile";
+import TaskCard from "@/components/TaskCard";
+
+export const dynamic = "force-dynamic";
+
+const ACTIVE_TASK_STATUSES: TaskStatus[] = [TaskStatus.OPEN, TaskStatus.ASSIGNED];
+
+export default async function DashboardPage() {
+  const current = await getCurrentUser();
+  if (!current) redirect("/login");
+
+  if (current.role === Role.CUSTOMER) {
+    return <CustomerDashboard userId={current.sub} name={current.name} />;
+  }
+  return <TaskerDashboard userId={current.sub} name={current.name} />;
+}
+
+/* ============================ Customer ============================ */
+
+async function CustomerDashboard({
+  userId,
+  name,
+}: {
+  userId: string;
+  name: string;
+}) {
+  const [tasks, outstandingPayments, acceptedBookingsNoPayment, chats, favorites] =
+    await Promise.all([
+      prisma.task.findMany({
+        where: { customerId: userId },
+        orderBy: { createdAt: "desc" },
+        include: {
+          category: {
+            select: { id: true, slug: true, name: true, emoji: true },
+          },
+          images: {
+            orderBy: { sortOrder: "asc" },
+            take: 1,
+            select: { id: true, url: true },
+          },
+          _count: { select: { bookings: true } },
+        },
+      }),
+      prisma.payment.findMany({
+        where: {
+          customerId: userId,
+          status: { in: [PaymentStatus.PENDING, PaymentStatus.AUTHORIZED] },
+        },
+        orderBy: { createdAt: "desc" },
+        include: {
+          booking: {
+            include: {
+              task: { select: { id: true, title: true } },
+              tasker: { select: { id: true, name: true } },
+            },
+          },
+        },
+      }),
+      prisma.booking.findMany({
+        where: {
+          status: BookingStatus.ACCEPTED,
+          payment: null,
+          task: { customerId: userId },
+        },
+        orderBy: { updatedAt: "desc" },
+        include: {
+          task: { select: { id: true, title: true, budget: true } },
+          tasker: { select: { id: true, name: true } },
+        },
+      }),
+      prisma.chat.findMany({
+        where: { booking: { task: { customerId: userId } } },
+        orderBy: [
+          { lastMessageAt: { sort: "desc", nulls: "last" } },
+          { createdAt: "desc" },
+        ],
+        take: 5,
+        include: {
+          booking: {
+            include: {
+              task: { select: { id: true, title: true } },
+              tasker: {
+                select: {
+                  id: true,
+                  name: true,
+                  taskerProfile: { select: { photoUrl: true } },
+                },
+              },
+            },
+          },
+          messages: { orderBy: { createdAt: "desc" }, take: 1 },
+          _count: {
+            select: {
+              messages: {
+                where: { readAt: null, senderId: { not: userId } },
+              },
+            },
+          },
+        },
+      }),
+      prisma.favorite.findMany({
+        where: { customerId: userId },
+        orderBy: { createdAt: "desc" },
+        take: 6,
+        include: {
+          tasker: {
+            select: {
+              id: true,
+              name: true,
+              taskerProfile: {
+                select: {
+                  photoUrl: true,
+                  hourlyRate: true,
+                  location: true,
+                  verificationStatus: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+    ]);
+
+  const activeTasks = tasks.filter((t) =>
+    ACTIVE_TASK_STATUSES.includes(t.status),
+  );
+  const completedTasks = tasks.filter(
+    (t) => t.status === TaskStatus.COMPLETED,
+  );
+
+  const totalFavorites = await prisma.favorite.count({
+    where: { customerId: userId },
+  });
+
+  const outstandingCount =
+    outstandingPayments.length + acceptedBookingsNoPayment.length;
+
+  return (
+    <div className="space-y-6">
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">
+            Welcome back, {name.split(" ")[0]}
+          </h1>
+          <p className="text-sm text-gray-600">
+            Everything you&apos;ve got going on, in one place.
+          </p>
+        </div>
+        <Link href="/tasks/new" className="btn-primary">
+          Post a task
+        </Link>
+      </header>
+
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatCard label="Active" value={activeTasks.length} accent="brand" />
+        <StatCard
+          label="Completed"
+          value={completedTasks.length}
+          accent="gray"
+        />
+        <StatCard
+          label="Pending payments"
+          value={outstandingCount}
+          accent={outstandingCount > 0 ? "yellow" : "gray"}
+        />
+        <StatCard label="Favorites" value={totalFavorites} accent="gray" />
+      </section>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="space-y-6 lg:col-span-2">
+          <section>
+            <SectionHeader title="Active tasks">
+              {activeTasks.length > 0 ? (
+                <Link
+                  href="/tasks?mine=true"
+                  className="text-sm text-brand-700 hover:underline"
+                >
+                  All tasks →
+                </Link>
+              ) : null}
+            </SectionHeader>
+            {activeTasks.length === 0 ? (
+              <EmptyState
+                title="No active tasks yet"
+                body="Post a task and taskers will start sending offers."
+                cta={{ href: "/tasks/new", label: "Post a task" }}
+              />
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {activeTasks.slice(0, 4).map((t) => (
+                  <TaskCard
+                    key={t.id}
+                    task={{ ...t, createdAt: t.createdAt.toISOString() }}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section>
+            <SectionHeader title="Pending payments" />
+            {outstandingCount === 0 ? (
+              <EmptyState
+                title="Nothing to pay right now"
+                body="Once you accept a tasker's offer, the booking will show up here for payment."
+              />
+            ) : (
+              <ul className="space-y-3">
+                {acceptedBookingsNoPayment.map((b) => (
+                  <li key={b.id} className="card p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <Link
+                          href={`/tasks/${b.task.id}`}
+                          className="font-medium hover:underline"
+                        >
+                          {b.task.title}
+                        </Link>
+                        <p className="mt-0.5 text-xs text-gray-500">
+                          Offer accepted from {b.tasker.name}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-semibold text-gray-900">
+                          KSh {b.task.budget}
+                        </p>
+                        <Link
+                          href={`/checkout/${b.id}`}
+                          className="btn-primary mt-2 inline-flex text-xs"
+                        >
+                          Pay now
+                        </Link>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+                {outstandingPayments.map((p) => (
+                  <li key={p.id} className="card p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <Link
+                          href={`/tasks/${p.booking.task.id}`}
+                          className="font-medium hover:underline"
+                        >
+                          {p.booking.task.title}
+                        </Link>
+                        <p className="mt-0.5 text-xs text-gray-500">
+                          {p.booking.tasker.name} · {p.provider}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-semibold text-gray-900">
+                          ${(p.amountCents / 100).toFixed(2)}
+                        </p>
+                        <span className="badge mt-1 bg-yellow-100 text-yellow-800">
+                          {p.status === PaymentStatus.AUTHORIZED
+                            ? "Awaiting capture"
+                            : "Awaiting payment"}
+                        </span>
+                        <Link
+                          href={`/checkout/${p.booking.id}`}
+                          className="btn-primary mt-2 inline-flex text-xs"
+                        >
+                          Resume payment
+                        </Link>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section>
+            <SectionHeader title="Recently completed">
+              {completedTasks.length > 3 ? (
+                <Link
+                  href="/tasks?mine=true&status=COMPLETED"
+                  className="text-sm text-brand-700 hover:underline"
+                >
+                  View all →
+                </Link>
+              ) : null}
+            </SectionHeader>
+            {completedTasks.length === 0 ? (
+              <EmptyState
+                title="No completed tasks yet"
+                body="Tasks you mark complete will appear here for your records."
+              />
+            ) : (
+              <ul className="space-y-2">
+                {completedTasks.slice(0, 3).map((t) => (
+                  <li
+                    key={t.id}
+                    className="card flex items-center justify-between p-4"
+                  >
+                    <div className="min-w-0">
+                      <Link
+                        href={`/tasks/${t.id}`}
+                        className="font-medium hover:underline"
+                      >
+                        {t.title}
+                      </Link>
+                      <p className="mt-0.5 text-xs text-gray-500">
+                        {t.category?.emoji} {t.category?.name} · {t.location}
+                      </p>
+                    </div>
+                    <span className="badge bg-gray-100 text-gray-700">
+                      KSh {t.budget}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+
+        <aside className="space-y-6">
+          <section>
+            <SectionHeader title="Messages" small />
+            {chats.length === 0 ? (
+              <EmptyState
+                small
+                title="No conversations yet"
+                body="When a tasker accepts your task, you'll be able to chat with them here."
+              />
+            ) : (
+              <ul className="space-y-2">
+                {chats.map((c) => {
+                  const last = c.messages[0];
+                  const unread = c._count.messages;
+                  return (
+                    <li key={c.id} className="card p-3">
+                      <Link
+                        href={`/chats/${c.id}`}
+                        className="flex items-start gap-3"
+                      >
+                        {c.booking.tasker.taskerProfile?.photoUrl ? (
+                          <img
+                            src={c.booking.tasker.taskerProfile.photoUrl}
+                            alt=""
+                            className="h-9 w-9 shrink-0 rounded-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-100 text-xs font-semibold text-brand-700">
+                            {initials(c.booking.tasker.name)}
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="truncate text-sm font-medium">
+                              {c.booking.tasker.name}
+                            </p>
+                            {unread > 0 ? (
+                              <span className="badge bg-red-100 text-red-700">
+                                {unread}
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-0.5 truncate text-xs text-gray-500">
+                            {c.booking.task.title}
+                          </p>
+                          {last ? (
+                            <p className="mt-1 line-clamp-2 text-xs text-gray-700">
+                              {last.body}
+                            </p>
+                          ) : null}
+                        </div>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+
+          <section>
+            <SectionHeader title="Favorite taskers" small>
+              {totalFavorites > 0 ? (
+                <Link
+                  href="/taskers"
+                  className="text-xs text-brand-700 hover:underline"
+                >
+                  Browse more →
+                </Link>
+              ) : null}
+            </SectionHeader>
+            {favorites.length === 0 ? (
+              <EmptyState
+                small
+                title="No favorites saved"
+                body="Tap the heart on a tasker's profile to save them for later."
+                cta={{ href: "/taskers", label: "Find taskers" }}
+              />
+            ) : (
+              <ul className="space-y-2">
+                {favorites.map((f) => (
+                  <li key={f.id} className="card p-3">
+                    <Link
+                      href={`/taskers/${f.tasker.id}`}
+                      className="flex items-center gap-3"
+                    >
+                      {f.tasker.taskerProfile?.photoUrl ? (
+                        <img
+                          src={f.tasker.taskerProfile.photoUrl}
+                          alt=""
+                          className="h-9 w-9 shrink-0 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-100 text-xs font-semibold text-brand-700">
+                          {initials(f.tasker.name)}
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="truncate text-sm font-medium">
+                            {f.tasker.name}
+                          </p>
+                          {f.tasker.taskerProfile?.verificationStatus ===
+                          "APPROVED" ? (
+                            <span
+                              className="text-xs text-brand-700"
+                              title="Identity verified"
+                            >
+                              ✓
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="mt-0.5 truncate text-xs text-gray-500">
+                          {f.tasker.taskerProfile?.location ?? "—"}
+                          {f.tasker.taskerProfile?.hourlyRate
+                            ? ` · $${f.tasker.taskerProfile.hourlyRate}/hr`
+                            : ""}
+                        </p>
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+/* ============================ Tasker ============================ */
+
+async function TaskerDashboard({
+  userId,
+  name,
+}: {
+  userId: string;
+  name: string;
+}) {
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+  const profile = await prisma.taskerProfile.findUnique({
+    where: { userId },
+  });
+
+  // We pre-load bookings so we can both render them and derive available jobs
+  // (excluding tasks the tasker has already offered on).
+  const bookings = await prisma.booking.findMany({
+    where: { taskerId: userId },
+    orderBy: { createdAt: "desc" },
+    include: {
+      task: {
+        include: {
+          customer: { select: { id: true, name: true } },
+          category: { select: { name: true, emoji: true } },
+        },
+      },
+      payment: {
+        select: {
+          status: true,
+          amountCents: true,
+          releasedAt: true,
+        },
+      },
+    },
+  });
+  const offeredTaskIds = bookings.map((b) => b.taskId);
+
+  // Best-effort "nearby": match the tasker's city (last comma-separated chunk)
+  // against task locations. If profile.location is unset, fall back to all
+  // open tasks. We exclude tasks the tasker already offered on.
+  const taskerCity =
+    profile?.location
+      ?.split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(-1)[0] ?? null;
+
+  const [
+    availableJobs,
+    earningsAgg,
+    monthEarningsAgg,
+    recentReviews,
+    offersThisMonth,
+    overallStats,
+  ] = await Promise.all([
+    prisma.task.findMany({
+      where: {
+        status: TaskStatus.OPEN,
+        id: { notIn: offeredTaskIds },
+        ...(taskerCity
+          ? { location: { contains: taskerCity, mode: "insensitive" } }
+          : {}),
+      },
+      orderBy: { createdAt: "desc" },
+      take: 6,
+      include: {
+        category: {
+          select: { id: true, slug: true, name: true, emoji: true },
+        },
+        customer: { select: { id: true, name: true } },
+        images: {
+          orderBy: { sortOrder: "asc" },
+          take: 1,
+          select: { id: true, url: true },
+        },
+        _count: { select: { bookings: true } },
+      },
+    }),
+    prisma.payment.aggregate({
+      _sum: { amountCents: true },
+      where: {
+        status: PaymentStatus.RELEASED,
+        booking: { taskerId: userId },
+      },
+    }),
+    prisma.payment.aggregate({
+      _sum: { amountCents: true },
+      where: {
+        status: PaymentStatus.RELEASED,
+        releasedAt: { gte: startOfMonth },
+        booking: { taskerId: userId },
+      },
+    }),
+    prisma.review.findMany({
+      where: { subjectId: userId },
+      orderBy: { createdAt: "desc" },
+      take: 3,
+      include: {
+        author: { select: { id: true, name: true } },
+        booking: {
+          include: { task: { select: { id: true, title: true } } },
+        },
+      },
+    }),
+    prisma.booking.count({
+      where: { taskerId: userId, createdAt: { gte: thirtyDaysAgo } },
+    }),
+    prisma.booking.groupBy({
+      by: ["status"],
+      where: { taskerId: userId },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const completeness = profileCompleteness(profile);
+  const status =
+    profile?.verificationStatus ?? VerificationStatus.NOT_SUBMITTED;
+
+  // Booking partitions for the requests panel.
+  const pendingOffers = bookings.filter(
+    (b) => b.status === BookingStatus.PENDING,
+  );
+  const activeJobs = bookings.filter(
+    (b) => b.status === BookingStatus.ACCEPTED,
+  );
+  const recentBookings = bookings
+    .filter((b) =>
+      [
+        BookingStatus.COMPLETED,
+        BookingStatus.DECLINED,
+        BookingStatus.CANCELLED,
+      ].includes(b.status),
+    )
+    .slice(0, 4);
+
+  // Aggregate stats from groupBy result.
+  const statCount = (st: BookingStatus) =>
+    overallStats.find((s) => s.status === st)?._count._all ?? 0;
+  const acceptedCount =
+    statCount(BookingStatus.ACCEPTED) + statCount(BookingStatus.COMPLETED);
+  const decidedCount = acceptedCount + statCount(BookingStatus.DECLINED);
+  const acceptanceRate =
+    decidedCount > 0 ? Math.round((acceptedCount / decidedCount) * 100) : null;
+
+  const totalEarningsCents = earningsAgg._sum.amountCents ?? 0;
+  const monthEarningsCents = monthEarningsAgg._sum.amountCents ?? 0;
+  const ratingAvg = profile?.ratingAvg ?? 0;
+  const ratingCount = profile?.ratingCount ?? 0;
+
+  return (
+    <div className="space-y-6">
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">
+            Welcome back, {name.split(" ")[0]}
+          </h1>
+          <p className="text-sm text-gray-600">
+            Your jobs, earnings, and reputation at a glance.
+          </p>
+        </div>
+        <Link href="/tasks" className="btn-primary">
+          Find tasks
+        </Link>
+      </header>
+
+      {/* Verification / completeness banner */}
+      {!completeness.complete ? (
+        <div className="card border-yellow-200 bg-yellow-50 p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold text-yellow-900">
+                Finish setting up your profile
+              </h2>
+              <p className="mt-1 text-sm text-yellow-900/80">
+                Customers can&apos;t find you in search until your profile is
+                complete and verified. You&apos;ve filled out{" "}
+                <strong>
+                  {completeness.filled} of {completeness.total}
+                </strong>{" "}
+                items.
+              </p>
+              <div className="mt-3 h-1.5 max-w-xs overflow-hidden rounded-full bg-yellow-100">
+                <div
+                  className="h-full bg-yellow-500"
+                  style={{ width: `${completeness.percent}%` }}
+                />
+              </div>
+            </div>
+            <Link href="/onboarding" className="btn-primary shrink-0">
+              Continue
+            </Link>
+          </div>
+        </div>
+      ) : status === VerificationStatus.PENDING ? (
+        <div className="card border-yellow-100 bg-yellow-50 p-5 text-sm text-yellow-900">
+          Your profile is awaiting admin review. We&apos;ll email you when the
+          decision is in.
+        </div>
+      ) : status === VerificationStatus.REJECTED ? (
+        <div className="card border-red-100 bg-red-50 p-5">
+          <h2 className="text-base font-semibold text-red-900">
+            Your submission was rejected
+          </h2>
+          {profile?.verificationNote ? (
+            <p className="mt-1 text-sm text-red-900/80">
+              {profile.verificationNote}
+            </p>
+          ) : null}
+          <Link href="/onboarding" className="btn-primary mt-3 inline-flex">
+            Update and resubmit
+          </Link>
+        </div>
+      ) : null}
+
+      {/* Stats strip */}
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatCard
+          label="Earnings"
+          value={`$${(totalEarningsCents / 100).toFixed(2)}`}
+          accent="brand"
+        />
+        <StatCard
+          label="Jobs completed"
+          value={statCount(BookingStatus.COMPLETED)}
+          accent="gray"
+        />
+        <StatCard
+          label="Rating"
+          value={
+            ratingCount > 0
+              ? `★ ${ratingAvg.toFixed(1)}`
+              : "—"
+          }
+          subtle={ratingCount > 0 ? `${ratingCount} reviews` : "No reviews yet"}
+          accent="gray"
+        />
+        <StatCard
+          label="Active"
+          value={activeJobs.length}
+          accent={activeJobs.length > 0 ? "yellow" : "gray"}
+        />
+      </section>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* Main column */}
+        <div className="space-y-6 lg:col-span-2">
+          <section>
+            <SectionHeader title="Booking requests">
+              <span className="text-xs text-gray-500">
+                {pendingOffers.length} pending · {activeJobs.length} active
+              </span>
+            </SectionHeader>
+
+            {pendingOffers.length === 0 &&
+            activeJobs.length === 0 &&
+            recentBookings.length === 0 ? (
+              <EmptyState
+                title="No offers yet"
+                body="Send an offer on an open task to start working with customers."
+                cta={{ href: "/tasks", label: "Browse open tasks" }}
+              />
+            ) : (
+              <div className="space-y-5">
+                {pendingOffers.length > 0 ? (
+                  <RequestList
+                    heading="Pending decisions"
+                    helper="Waiting for the customer to accept or decline."
+                    bookings={pendingOffers}
+                    currentUserId={userId}
+                  />
+                ) : null}
+                {activeJobs.length > 0 ? (
+                  <RequestList
+                    heading="Active jobs"
+                    helper="Accepted offers — get them done and mark complete."
+                    bookings={activeJobs}
+                    currentUserId={userId}
+                  />
+                ) : null}
+                {recentBookings.length > 0 ? (
+                  <RequestList
+                    heading="Recent"
+                    bookings={recentBookings}
+                    currentUserId={userId}
+                  />
+                ) : null}
+              </div>
+            )}
+          </section>
+
+          <section>
+            <SectionHeader title="Available jobs nearby">
+              {taskerCity ? (
+                <span className="text-xs text-gray-500">
+                  in {taskerCity}
+                </span>
+              ) : (
+                <Link
+                  href="/onboarding"
+                  className="text-xs text-brand-700 hover:underline"
+                >
+                  Set your location →
+                </Link>
+              )}
+            </SectionHeader>
+            {availableJobs.length === 0 ? (
+              <EmptyState
+                title={
+                  taskerCity
+                    ? `No open tasks in ${taskerCity} right now`
+                    : "No open tasks right now"
+                }
+                body="Check back soon — new tasks appear throughout the day."
+                cta={{ href: "/tasks", label: "Browse all tasks" }}
+              />
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {availableJobs.map((t) => (
+                  <TaskCard
+                    key={t.id}
+                    task={{ ...t, createdAt: t.createdAt.toISOString() }}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+
+        {/* Side column */}
+        <aside className="space-y-6">
+          <section className="card p-5">
+            <SectionHeader title="Analytics" small />
+            <dl className="space-y-4">
+              <Metric
+                label="This month"
+                value={`$${(monthEarningsCents / 100).toFixed(2)}`}
+                sub="paid out so far"
+              />
+              <Metric
+                label="Offers sent"
+                value={offersThisMonth.toLocaleString()}
+                sub="past 30 days"
+              />
+              <div>
+                <div className="flex items-baseline justify-between">
+                  <dt className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                    Acceptance rate
+                  </dt>
+                  <dd className="text-sm font-semibold text-gray-900">
+                    {acceptanceRate == null ? "—" : `${acceptanceRate}%`}
+                  </dd>
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-100">
+                  <div
+                    className="h-full bg-brand-600 transition-all"
+                    style={{ width: `${acceptanceRate ?? 0}%` }}
+                  />
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  {decidedCount > 0
+                    ? `${acceptedCount} of ${decidedCount} decided offers accepted.`
+                    : "Send a few offers to see your rate."}
+                </p>
+              </div>
+            </dl>
+          </section>
+
+          <section>
+            <SectionHeader title="Recent reviews" small>
+              {ratingCount > 0 ? (
+                <span className="text-xs text-gray-500">
+                  {ratingCount} total
+                </span>
+              ) : null}
+            </SectionHeader>
+            {recentReviews.length === 0 ? (
+              <EmptyState
+                small
+                title="No reviews yet"
+                body="Customers can leave a review after you complete a job."
+              />
+            ) : (
+              <ul className="space-y-2">
+                {recentReviews.map((r) => (
+                  <li key={r.id} className="card p-3">
+                    <div className="flex items-center gap-1 text-yellow-500" aria-label={`${r.rating} of 5 stars`}>
+                      {Array.from({ length: 5 }).map((_, i) => (
+                        <svg
+                          key={i}
+                          className="h-3 w-3"
+                          viewBox="0 0 20 20"
+                          fill={i < r.rating ? "currentColor" : "none"}
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          aria-hidden="true"
+                        >
+                          <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.286 3.957a1 1 0 00.95.69h4.162c.969 0 1.371 1.24.588 1.81l-3.367 2.447a1 1 0 00-.364 1.118l1.287 3.957c.3.921-.755 1.688-1.54 1.118l-3.367-2.447a1 1 0 00-1.176 0l-3.367 2.447c-.784.57-1.838-.197-1.539-1.118l1.287-3.957a1 1 0 00-.364-1.118L2.05 9.384c-.783-.57-.38-1.81.588-1.81h4.162a1 1 0 00.95-.69l1.286-3.957z" />
+                        </svg>
+                      ))}
+                    </div>
+                    {r.comment ? (
+                      <p className="mt-2 line-clamp-3 text-xs text-gray-700">
+                        “{r.comment}”
+                      </p>
+                    ) : null}
+                    <p className="mt-2 text-[11px] text-gray-500">
+                      {r.author.name} · {r.booking.task.title}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+/* ============================ Bits ============================ */
+
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
+function StatCard({
+  label,
+  value,
+  subtle,
+  accent,
+}: {
+  label: string;
+  value: number | string;
+  subtle?: string;
+  accent: "brand" | "gray" | "yellow";
+}) {
+  const cls =
+    accent === "brand"
+      ? "text-brand-700"
+      : accent === "yellow"
+        ? "text-yellow-700"
+        : "text-gray-700";
+  return (
+    <div className="card p-4">
+      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+        {label}
+      </p>
+      <p className={`mt-1 text-2xl font-bold ${cls}`}>{value}</p>
+      {subtle ? (
+        <p className="mt-0.5 text-xs text-gray-500">{subtle}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  sub,
+}: {
+  label: string;
+  value: string;
+  sub: string;
+}) {
+  return (
+    <div>
+      <dt className="text-xs font-medium uppercase tracking-wide text-gray-500">
+        {label}
+      </dt>
+      <dd className="mt-1 flex items-baseline gap-2">
+        <span className="text-lg font-semibold text-gray-900">{value}</span>
+        <span className="text-xs text-gray-500">{sub}</span>
+      </dd>
+    </div>
+  );
+}
+
+function SectionHeader({
+  title,
+  children,
+  small,
+}: {
+  title: string;
+  children?: React.ReactNode;
+  small?: boolean;
+}) {
+  return (
+    <div className="mb-3 flex items-baseline justify-between gap-3">
+      <h2
+        className={
+          small
+            ? "text-sm font-semibold text-gray-900"
+            : "text-lg font-semibold text-gray-900"
+        }
+      >
+        {title}
+      </h2>
+      {children}
+    </div>
+  );
+}
+
+function EmptyState({
+  title,
+  body,
+  cta,
+  small,
+}: {
+  title: string;
+  body: string;
+  cta?: { href: string; label: string };
+  small?: boolean;
+}) {
+  return (
+    <div className={small ? "card p-4 text-center" : "card p-8 text-center"}>
+      <p
+        className={
+          small
+            ? "text-sm font-medium text-gray-900"
+            : "text-base font-medium text-gray-900"
+        }
+      >
+        {title}
+      </p>
+      <p
+        className={
+          small ? "mt-1 text-xs text-gray-600" : "mt-1 text-sm text-gray-600"
+        }
+      >
+        {body}
+      </p>
+      {cta ? (
+        <Link
+          href={cta.href}
+          className={
+            small
+              ? "mt-3 inline-flex btn-secondary"
+              : "btn-primary mt-4 inline-flex"
+          }
+        >
+          {cta.label}
+        </Link>
+      ) : null}
+    </div>
+  );
+}
+
+/* ============================ Tasker bits ============================ */
+
+const STATUS_BADGE: Record<BookingStatus, string> = {
+  PENDING: "bg-yellow-100 text-yellow-800",
+  ACCEPTED: "bg-brand-100 text-brand-700",
+  DECLINED: "bg-gray-100 text-gray-700",
+  COMPLETED: "bg-gray-100 text-gray-700",
+  CANCELLED: "bg-red-100 text-red-700",
+};
+
+type RequestListBooking = {
+  id: string;
+  status: BookingStatus;
+  message: string | null;
+  priceCents: number | null;
+  estimatedMinutes: number | null;
+  createdAt: Date;
+  task: {
+    id: string;
+    title: string;
+    location: string;
+    budget: number;
+    customer: { id: string; name: string };
+    category: { name: string; emoji: string } | null;
+  };
+  payment: { status: PaymentStatus; amountCents: number } | null;
+};
+
+function formatDurationShort(minutes: number | null): string | null {
+  if (minutes == null) return null;
+  if (minutes < 60) return `${minutes}m`;
+  const hours = minutes / 60;
+  if (hours < 24) return hours % 1 === 0 ? `${hours}h` : `${hours.toFixed(1)}h`;
+  const days = hours / 24;
+  return days % 1 === 0 ? `${days}d` : `${days.toFixed(1)}d`;
+}
+
+function RequestList({
+  heading,
+  helper,
+  bookings,
+  currentUserId,
+}: {
+  heading: string;
+  helper?: string;
+  bookings: RequestListBooking[];
+  currentUserId: string;
+}) {
+  // currentUserId is reserved for future "open chat" actions per row.
+  void currentUserId;
+  return (
+    <div>
+      <div className="mb-2 flex items-baseline justify-between">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          {heading}
+        </h3>
+        {helper ? (
+          <p className="text-xs text-gray-500">{helper}</p>
+        ) : null}
+      </div>
+      <ul className="space-y-2">
+        {bookings.map((b) => {
+          const offerDollars =
+            b.priceCents != null ? b.priceCents / 100 : null;
+          const duration = formatDurationShort(b.estimatedMinutes);
+          return (
+            <li key={b.id} className="card p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <Link
+                    href={`/tasks/${b.task.id}`}
+                    className="text-sm font-semibold hover:underline"
+                  >
+                    {b.task.title}
+                  </Link>
+                  <p className="mt-0.5 text-xs text-gray-500">
+                    {b.task.category ? (
+                      <>
+                        <span aria-hidden="true">{b.task.category.emoji}</span>{" "}
+                        {b.task.category.name} ·{" "}
+                      </>
+                    ) : null}
+                    {b.task.location} · {b.task.customer.name}
+                  </p>
+                  {b.message ? (
+                    <p className="mt-2 line-clamp-2 text-xs text-gray-700">
+                      “{b.message}”
+                    </p>
+                  ) : null}
+                </div>
+                <div className="text-right">
+                  {offerDollars != null ? (
+                    <>
+                      <p className="text-sm font-semibold text-gray-900">
+                        ${offerDollars.toFixed(0)}
+                      </p>
+                      <p className="text-[11px] text-gray-500">
+                        budget KSh {b.task.budget}
+                        {duration ? ` · ~${duration}` : ""}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-sm font-semibold text-gray-900">
+                      KSh {b.task.budget}
+                    </p>
+                  )}
+                  <span className={`badge mt-1 ${STATUS_BADGE[b.status]}`}>
+                    {b.status}
+                  </span>
+                  {b.payment ? (
+                    <p className="mt-1 text-[11px] text-gray-500">
+                      {b.payment.status === PaymentStatus.RELEASED
+                        ? "Paid out"
+                        : b.payment.status === PaymentStatus.CAPTURED
+                          ? "In escrow"
+                          : b.payment.status === PaymentStatus.AUTHORIZED
+                            ? "Authorized"
+                            : b.payment.status === PaymentStatus.PENDING
+                              ? "Awaiting payment"
+                              : b.payment.status}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}

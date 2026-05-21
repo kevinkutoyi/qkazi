@@ -1,0 +1,270 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import DateTimePicker from "@/components/DateTimePicker";
+
+type Props =
+  | {
+      kind: "tasker-offer";
+      taskId: string;
+      taskBudget: number;
+      timezone: string;
+    }
+  | { kind: "customer-decide"; bookingId: string }
+  | { kind: "customer-complete"; bookingId: string };
+
+export default function TaskActions(props: Props) {
+  const router = useRouter();
+  const [loading, setLoading] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const [price, setPrice] = useState<string>(
+    props.kind === "tasker-offer" ? String(props.taskBudget) : "",
+  );
+  const [hours, setHours] = useState<string>("");
+  const [message, setMessage] = useState("");
+  const [scheduledAt, setScheduledAt] = useState<Date | null>(null);
+  const [proposeTime, setProposeTime] = useState(false);
+
+  async function submitOffer(e: React.FormEvent) {
+    e.preventDefault();
+    if (props.kind !== "tasker-offer") return;
+    setError(null);
+
+    const priceNum = Number(price);
+    if (!Number.isFinite(priceNum) || priceNum <= 0) {
+      setError("Enter a price greater than $0.");
+      return;
+    }
+    const hoursNum = hours === "" ? null : Number(hours);
+    if (hoursNum !== null && (!Number.isFinite(hoursNum) || hoursNum <= 0)) {
+      setError("Estimated hours must be a positive number.");
+      return;
+    }
+    if (proposeTime && !scheduledAt) {
+      setError("Pick a date and time, or turn off 'Propose a time'.");
+      return;
+    }
+
+    setLoading("offer");
+    try {
+      const res = await fetch("/api/bookings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          taskId: props.taskId,
+          message: message || undefined,
+          priceCents: Math.round(priceNum * 100),
+          estimatedMinutes:
+            hoursNum !== null ? Math.round(hoursNum * 60) : undefined,
+          scheduledAt:
+            proposeTime && scheduledAt ? scheduledAt.toISOString() : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Could not send offer");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("Network error");
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  async function patchBooking(status: string, key: string) {
+    if (props.kind === "tasker-offer") return;
+    setError(null);
+    setLoading(key);
+    try {
+      const res = await fetch(`/api/bookings/${props.bookingId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Could not update booking");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("Network error");
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  if (props.kind === "tasker-offer") {
+    const priceNum = Number(price);
+    const diff =
+      Number.isFinite(priceNum) && props.taskBudget > 0
+        ? priceNum - props.taskBudget
+        : 0;
+    const diffLabel =
+      diff > 0
+        ? `$${diff.toFixed(0)} above budget`
+        : diff < 0
+          ? `$${Math.abs(diff).toFixed(0)} under budget`
+          : "Matches the budget";
+
+    return (
+      <form onSubmit={submitOffer} className="space-y-3">
+        <div>
+          <label className="label" htmlFor="offer-price">
+            Your price (USD)
+          </label>
+          <div className="relative">
+            <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-sm text-gray-500">
+              $
+            </span>
+            <input
+              id="offer-price"
+              type="number"
+              min={1}
+              step={1}
+              required
+              className="input pl-7"
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+            />
+          </div>
+          <p className="mt-1 text-xs text-gray-500">
+            Customer&apos;s budget: KSh {props.taskBudget}.{" "}
+            {Number.isFinite(priceNum) && priceNum > 0 ? (
+              <span
+                className={
+                  diff > 0
+                    ? "text-yellow-700"
+                    : diff < 0
+                      ? "text-brand-700"
+                      : "text-gray-500"
+                }
+              >
+                {diffLabel}.
+              </span>
+            ) : null}
+          </p>
+        </div>
+
+        <div>
+          <label className="label" htmlFor="offer-hours">
+            Estimated time (hours)
+          </label>
+          <input
+            id="offer-hours"
+            type="number"
+            min={0.5}
+            step={0.5}
+            className="input"
+            value={hours}
+            onChange={(e) => setHours(e.target.value)}
+            placeholder="e.g. 2"
+          />
+        </div>
+
+        <div className="rounded-md border border-gray-200 p-3">
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={proposeTime}
+              onChange={(e) => setProposeTime(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+            />
+            <span>
+              <span className="block font-medium text-gray-900">
+                Propose a date & time
+              </span>
+              <span className="block text-xs text-gray-500">
+                Leave off to let the customer pick after accepting.
+              </span>
+            </span>
+          </label>
+          {proposeTime ? (
+            <div className="mt-3">
+              <DateTimePicker
+                value={scheduledAt}
+                onChange={setScheduledAt}
+                timezone={props.timezone}
+                mode="datetime"
+                required
+              />
+            </div>
+          ) : null}
+        </div>
+
+        <div>
+          <label className="label" htmlFor="offer-msg">
+            Message
+          </label>
+          <textarea
+            id="offer-msg"
+            className="input min-h-[80px]"
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            placeholder="Why are you a great fit? Anything the customer should know?"
+          />
+        </div>
+
+        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+
+        <button
+          type="submit"
+          className="btn-primary w-full"
+          disabled={loading === "offer"}
+        >
+          {loading === "offer" ? "Sending…" : "Send offer"}
+        </button>
+      </form>
+    );
+  }
+
+  if (props.kind === "customer-decide") {
+    return (
+      <div className="mt-3 flex flex-col gap-2">
+        <div className="flex gap-2">
+          <button
+            className="btn-primary"
+            onClick={() => patchBooking("ACCEPTED", "accept")}
+            disabled={loading !== null}
+          >
+            {loading === "accept" ? "Accepting…" : "Accept"}
+          </button>
+          <button
+            className="btn-secondary"
+            onClick={() => patchBooking("DECLINED", "decline")}
+            disabled={loading !== null}
+          >
+            {loading === "decline" ? "Declining…" : "Decline"}
+          </button>
+        </div>
+        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 flex flex-col gap-2">
+      <div className="flex gap-2">
+        <button
+          className="btn-primary"
+          onClick={() => patchBooking("COMPLETED", "complete")}
+          disabled={loading !== null}
+        >
+          {loading === "complete" ? "Marking…" : "Mark complete"}
+        </button>
+        <button
+          className="btn-danger"
+          onClick={() => patchBooking("CANCELLED", "cancel")}
+          disabled={loading !== null}
+        >
+          {loading === "cancel" ? "Cancelling…" : "Cancel"}
+        </button>
+      </div>
+      {error ? <p className="text-sm text-red-600">{error}</p> : null}
+    </div>
+  );
+}

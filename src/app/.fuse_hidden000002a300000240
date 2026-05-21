@@ -1,0 +1,457 @@
+import Link from "next/link";
+
+// Slugs match prisma/seed.ts.
+const CATEGORIES = [
+  { label: "Cleaning",  emoji: "🧹", blurb: "Homes, apartments, deep cleans",     href: "/tasks?category=cleaning" },
+  { label: "Moving",    emoji: "📦", blurb: "Help loading, unloading, hauling",   href: "/tasks?category=moving" },
+  { label: "Handyman",  emoji: "🔧", blurb: "Repairs, mounting, small fixes",     href: "/tasks?category=handyman" },
+  { label: "Delivery",  emoji: "🚚", blurb: "Pickups, drop-offs, courier runs",   href: "/tasks?category=delivery" },
+  { label: "Gardening", emoji: "🌿", blurb: "Mowing, weeding, planting",           href: "/tasks?category=gardening" },
+  { label: "Assembly",  emoji: "🪛", blurb: "IKEA, shelves, beds, anything",       href: "/tasks?category=assembly" },
+  { label: "Painting",  emoji: "🎨", blurb: "Rooms, touch-ups, fences",            href: "/tasks?category=painting" },
+  { label: "Tech help", emoji: "💻", blurb: "Setup, networking, troubleshooting", href: "/tasks?category=tech-help" },
+];
+
+const TESTIMONIALS = [
+  {
+    name: "Amina O.",
+    role: "Customer · Nairobi",
+    quote:
+      "Posted a moving job at 9am, had three offers by lunch. The tasker I picked was a lifesaver — Qkazi paid for itself.",
+    initials: "AO",
+  },
+  {
+    name: "David K.",
+    role: "Tasker · Mombasa",
+    quote:
+      "I do handyman work on weekends. Qkazi keeps my calendar full and the customer reviews help me charge a fair rate.",
+    initials: "DK",
+  },
+  {
+    name: "Priya S.",
+    role: "Customer · Kisumu",
+    quote:
+      "I was nervous about hiring online but the verified profiles and reviews made it easy. Now it's my first stop for any task.",
+    initials: "PS",
+  },
+];
+
+const STATS = [
+  { value: "12k+", label: "Tasks completed" },
+  { value: "2,800", label: "Active taskers" },
+  { value: "4.9 / 5", label: "Average rating" },
+  { value: "<2 hrs", label: "Median response" },
+];
+
+const TRUST_BADGES = [
+  { label: "ID-verified taskers", icon: "🛡️" },
+  { label: "Secure payments", icon: "🔒" },
+  { label: "Money-back guarantee", icon: "💸" },
+  { label: "24/7 support", icon: "📞" },
+];
+
+export default function HomePage() {
+  return (
+    <div className="-mx-4 -my-8 sm:-mx-6 lg:-mx-8">
+      {/* Hero */}
+      <section className="relative overflow-hidden bg-gradient-to-br from-brand-50 via-white to-white">
+        <div className="absolute inset-x-0 top-0 -z-10 h-[500px] bg-[radial-gradient(circle_at_30%_20%,rgba(34,197,94,0.18),transparent_60%)]" />
+        <div className="mx-auto max-w-6xl px-4 pb-16 pt-12 sm:px-6 sm:pt-16 lg:px-8 lg:pb-24 lg:pt-20">
+          <div className="grid items-center gap-10 lg:grid-cols-2 lg:gap-16">
+            <div className="text-center lg:text-left">
+              <span className="badge inline-flex items-center gap-1 bg-brand-100 text-brand-700">
+                <span className="h-1.5 w-1.5 rounded-full bg-brand-600" />
+                Trusted by 12,000+ customers
+              </span>
+              <h1 className="mt-4 text-4xl font-bold tracking-tight text-gray-900 sm:text-5xl lg:text-6xl">
+                Get everyday tasks done by{" "}
+                <span className="text-brand-600">trusted local taskers</span>.
+              </h1>
+              <p className="mx-auto mt-4 max-w-xl text-base text-gray-600 sm:text-lg lg:mx-0">
+                Post a task, compare offers, and pick the right person. From
+                cleaning to moving to mounting that shelf you&apos;ve been
+                avoiding — Qkazi has you covered.
+              </p>
+
+              {/* Search bar */}
+              <form
+                action="/tasks"
+                className="mx-auto mt-6 max-w-xl lg:mx-0"
+                role="search"
+              >
+                <div className="card flex flex-col gap-2 p-2 shadow-sm sm:flex-row sm:items-center">
+                  <label htmlFor="q" className="sr-only">
+                    What do you need help with?
+                  </label>
+                  <div className="flex flex-1 items-center gap-2 px-2">
+                    <svg
+                      className="h-5 w-5 shrink-0 text-gray-400"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                    <input
+                      id="q"
+                      name="q"
+                      type="search"
+                      placeholder="What do you need help with?"
+                      className="w-full border-0 bg-transparent py-2 text-sm focus:outline-none focus:ring-0 sm:text-base"
+                    />
+                  </div>
+                  <div className="hidden h-8 w-px bg-gray-200 sm:block" />
+                  <div className="flex flex-1 items-center gap-2 px-2">
+                    <svg
+                      className="h-5 w-5 shrink-0 text-gray-400"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 000-1.5h-3.25V5z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                    <input
+                      id="location"
+                      name="location"
+                      type="text"
+                      placeholder="City or neighborhood"
+                      className="w-full border-0 bg-transparent py-2 text-sm focus:outline-none focus:ring-0 sm:text-base"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="btn-primary w-full sm:w-auto"
+                  >
+                    Search
+                  </button>
+                </div>
+                <p className="mt-2 text-xs text-gray-500">
+                  Popular:{" "}
+                  <Link className="hover:underline" href="/tasks?category=cleaning">
+                    Cleaning
+                  </Link>
+                  ,{" "}
+                  <Link className="hover:underline" href="/tasks?category=moving">
+                    Moving
+                  </Link>
+                  ,{" "}
+                  <Link className="hover:underline" href="/tasks?category=assembly">
+                    Assembly
+                  </Link>
+                </p>
+              </form>
+
+              <div className="mt-6 flex flex-col items-center gap-3 sm:flex-row sm:gap-3 lg:items-start">
+                <Link href="/register" className="btn-primary w-full sm:w-auto">
+                  Get started — it&apos;s free
+                </Link>
+                <Link
+                  href="/register?role=tasker"
+                  className="btn-secondary w-full sm:w-auto"
+                >
+                  Become a tasker
+                </Link>
+              </div>
+
+              {/* Trust badges row */}
+              <ul className="mt-8 grid grid-cols-2 gap-3 text-xs text-gray-600 sm:grid-cols-4 sm:text-sm">
+                {TRUST_BADGES.map((b) => (
+                  <li key={b.label} className="flex items-center gap-2">
+                    <span aria-hidden="true">{b.icon}</span>
+                    <span>{b.label}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Hero illustration card */}
+            <div className="relative">
+              <div className="card mx-auto max-w-md p-6 shadow-md lg:max-w-none">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                      Live request
+                    </p>
+                    <h3 className="mt-1 text-lg font-semibold">
+                      Help moving a 2-bedroom apartment
+                    </h3>
+                  </div>
+                  <span className="badge bg-brand-100 text-brand-700">OPEN</span>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+                  <span>Moving</span>
+                  <span>·</span>
+                  <span>Westlands</span>
+                  <span>·</span>
+                  <span className="font-medium text-gray-700">$180</span>
+                </div>
+                <div className="mt-5 space-y-3">
+                  {[
+                    {
+                      name: "David K.",
+                      rate: "$22/hr",
+                      msg: "I have a pickup truck and can be there by 2pm.",
+                      initials: "DK",
+                    },
+                    {
+                      name: "Mary W.",
+                      rate: "$18/hr",
+                      msg: "Done dozens of moves around Westlands. Free quote!",
+                      initials: "MW",
+                    },
+                    {
+                      name: "Jomo T.",
+                      rate: "$25/hr",
+                      msg: "Available all weekend with two helpers.",
+                      initials: "JT",
+                    },
+                  ].map((offer) => (
+                    <div
+                      key={offer.name}
+                      className="flex items-start gap-3 rounded-md border border-gray-200 p-3"
+                    >
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-100 text-sm font-semibold text-brand-700">
+                        {offer.initials}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="truncate text-sm font-medium">
+                            {offer.name}
+                          </p>
+                          <p className="text-xs text-gray-500">{offer.rate}</p>
+                        </div>
+                        <p className="mt-0.5 line-clamp-2 text-xs text-gray-600">
+                          {offer.msg}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-4 text-center text-xs text-gray-500">
+                  3 offers in under 2 hours
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Stats strip */}
+      <section className="border-y border-gray-200 bg-white">
+        <div className="mx-auto grid max-w-6xl grid-cols-2 gap-y-6 px-4 py-8 sm:grid-cols-4 sm:px-6 lg:px-8">
+          {STATS.map((s) => (
+            <div key={s.label} className="text-center">
+              <p className="text-2xl font-bold text-gray-900 sm:text-3xl">
+                {s.value}
+              </p>
+              <p className="mt-1 text-xs text-gray-500 sm:text-sm">{s.label}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Categories */}
+      <section className="bg-gray-50">
+        <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:px-8">
+          <div className="text-center">
+            <h2 className="text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl">
+              Browse by category
+            </h2>
+            <p className="mx-auto mt-2 max-w-2xl text-sm text-gray-600 sm:text-base">
+              Whatever you need done, there&apos;s a tasker for it.
+            </p>
+          </div>
+
+          <ul className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
+            {CATEGORIES.map((c) => (
+              <li key={c.label}>
+                <Link
+                  href={c.href}
+                  className="card flex h-full flex-col items-start gap-2 p-4 transition hover:-translate-y-0.5 hover:shadow-md sm:p-5"
+                >
+                  <span className="text-2xl sm:text-3xl" aria-hidden="true">
+                    {c.emoji}
+                  </span>
+                  <span className="text-sm font-semibold text-gray-900 sm:text-base">
+                    {c.label}
+                  </span>
+                  <span className="text-xs text-gray-600 sm:text-sm">
+                    {c.blurb}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+
+          <div className="mt-6 text-center">
+            <Link
+              href="/categories"
+              className="inline-flex items-center gap-1 text-sm font-medium text-brand-700 hover:underline"
+            >
+              See all services →
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* How it works */}
+      <section className="bg-white">
+        <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:px-8">
+          <div className="text-center">
+            <h2 className="text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl">
+              How Qkazi works
+            </h2>
+            <p className="mx-auto mt-2 max-w-2xl text-sm text-gray-600 sm:text-base">
+              Three simple steps from posting to done.
+            </p>
+          </div>
+          <div className="mt-10 grid gap-6 sm:grid-cols-3">
+            {[
+              {
+                step: "1",
+                title: "Post your task",
+                body: "Tell us what you need, your location, and your budget. Takes 60 seconds.",
+              },
+              {
+                step: "2",
+                title: "Compare offers",
+                body: "Taskers send you offers. Review their rates, skills, and ratings, then pick the best fit.",
+              },
+              {
+                step: "3",
+                title: "Get it done",
+                body: "Accept an offer, get the work done, mark complete. Pay securely through Qkazi.",
+              },
+            ].map((s) => (
+              <div key={s.step} className="card p-6">
+                <div className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-brand-600 text-base font-semibold text-white">
+                  {s.step}
+                </div>
+                <h3 className="mt-4 text-lg font-semibold text-gray-900">
+                  {s.title}
+                </h3>
+                <p className="mt-2 text-sm text-gray-600">{s.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Testimonials */}
+      <section className="bg-gray-50">
+        <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:px-8">
+          <div className="text-center">
+            <h2 className="text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl">
+              Loved by customers and taskers
+            </h2>
+            <p className="mx-auto mt-2 max-w-2xl text-sm text-gray-600 sm:text-base">
+              Real stories from the Qkazi community.
+            </p>
+          </div>
+
+          <ul className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {TESTIMONIALS.map((t) => (
+              <li key={t.name} className="card flex flex-col p-6">
+                <div className="flex items-center gap-1 text-yellow-500" aria-label="5 out of 5 stars">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <svg
+                      key={i}
+                      className="h-4 w-4"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.286 3.957a1 1 0 00.95.69h4.162c.969 0 1.371 1.24.588 1.81l-3.367 2.447a1 1 0 00-.364 1.118l1.287 3.957c.3.921-.755 1.688-1.54 1.118l-3.367-2.447a1 1 0 00-1.176 0l-3.367 2.447c-.784.57-1.838-.197-1.539-1.118l1.287-3.957a1 1 0 00-.364-1.118L2.05 9.384c-.783-.57-.38-1.81.588-1.81h4.162a1 1 0 00.95-.69l1.286-3.957z" />
+                    </svg>
+                  ))}
+                </div>
+                <blockquote className="mt-4 flex-1 text-sm text-gray-700 sm:text-base">
+                  “{t.quote}”
+                </blockquote>
+                <div className="mt-5 flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-100 text-sm font-semibold text-brand-700">
+                    {t.initials}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{t.name}</p>
+                    <p className="text-xs text-gray-500">{t.role}</p>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </section>
+
+      {/* Final CTA */}
+      <section className="bg-white">
+        <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:px-8">
+          <div className="card overflow-hidden bg-brand-600 p-8 text-white sm:p-12">
+            <div className="grid items-center gap-6 lg:grid-cols-2">
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
+                  Ready to get something done?
+                </h2>
+                <p className="mt-2 text-sm text-brand-50 sm:text-base">
+                  Join thousands of customers and taskers on Qkazi. It only
+                  takes a minute to sign up.
+                </p>
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row lg:justify-end">
+                <Link
+                  href="/register"
+                  className="btn w-full bg-white text-brand-700 hover:bg-brand-50 sm:w-auto"
+                >
+                  Post a task
+                </Link>
+                <Link
+                  href="/register?role=tasker"
+                  className="btn w-full ring-1 ring-inset ring-white/60 text-white hover:bg-brand-700 sm:w-auto"
+                >
+                  Earn as a tasker
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="border-t border-gray-200 bg-white">
+        <div className="mx-auto flex max-w-6xl flex-col items-start justify-between gap-4 px-4 py-8 sm:px-6 lg:flex-row lg:items-center lg:px-8">
+          <div className="flex items-center gap-2">
+            <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-brand-600 text-sm font-bold text-white">
+              Q
+            </span>
+            <span className="text-sm font-semibold">Qkazi</span>
+            <span className="ml-2 text-xs text-gray-500">
+              © {new Date().getFullYear()} Qkazi. All rights reserved.
+            </span>
+          </div>
+          <nav className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-gray-600">
+            <Link href="/tasks" className="hover:text-gray-900">
+              Browse tasks
+            </Link>
+            <Link href="/taskers" className="hover:text-gray-900">
+              Find taskers
+            </Link>
+            <Link href="/register" className="hover:text-gray-900">
+              Sign up
+            </Link>
+            <Link href="/login" className="hover:text-gray-900">
+              Log in
+            </Link>
+          </nav>
+        </div>
+      </footer>
+    </div>
+  );
+}

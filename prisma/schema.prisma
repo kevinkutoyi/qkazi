@@ -1,0 +1,454 @@
+// Qkazi data model
+// Run `npm run db:migrate` after editing.
+//
+// Conventions:
+//   * Money is stored in the smallest currency unit (e.g. USD cents) as Int.
+//   * `*At` fields are nullable timestamps that flip when a state is reached.
+//   * Soft-delete is intentionally not used; deletes cascade via FK.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================ Enums ============================ //
+
+enum Role {
+  CUSTOMER
+  TASKER
+  ADMIN
+}
+
+enum TaskStatus {
+  OPEN
+  ASSIGNED
+  COMPLETED
+  CANCELLED
+}
+
+enum BookingStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  COMPLETED
+  CANCELLED
+}
+
+enum VerificationTokenType {
+  EMAIL_VERIFY
+  PASSWORD_RESET
+}
+
+enum VerificationStatus {
+  NOT_SUBMITTED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum PaymentStatus {
+  PENDING       // awaiting customer to complete payment
+  AUTHORIZED    // card authorized, funds not yet captured
+  CAPTURED      // funds in platform escrow
+  RELEASED      // funds transferred to tasker after completion
+  REFUNDED      // funds returned to customer
+  FAILED
+  CANCELLED
+}
+
+enum PaymentProvider {
+  STRIPE
+  MPESA
+  PESAPAL
+  MANUAL
+}
+
+enum PayoutStatus {
+  REQUESTED     // tasker submitted, awaiting admin
+  PROCESSING    // admin/API in flight
+  PAID          // settled
+  FAILED
+  CANCELLED
+}
+
+enum PayoutMethod {
+  M_PESA
+  BANK
+  MANUAL
+}
+
+enum NotificationType {
+  NEW_OFFER
+  OFFER_ACCEPTED
+  OFFER_DECLINED
+  TASK_COMPLETED
+  NEW_MESSAGE
+  PAYMENT_AUTHORIZED
+  PAYMENT_RELEASED
+  REVIEW_RECEIVED
+  VERIFICATION_APPROVED
+  VERIFICATION_REJECTED
+  GENERIC
+}
+
+// ============================ Models ============================ //
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String?
+  emailVerified DateTime?
+  googleId      String?   @unique
+  name          String
+  role          Role
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Denormalized customer-side ratings: updated when a tasker reviews this
+  // user after a completed booking. Lets us filter tasks by the customer's
+  // reputation without joining + aggregating on every search.
+  customerRatingAvg   Float @default(0)
+  customerRatingCount Int   @default(0)
+
+  // IANA timezone (e.g. "Africa/Nairobi"). Used to render every scheduled
+  // date/time in the user's local zone. Nullable so it can be auto-set on
+  // first login by the TimezoneSync component.
+  timezone String?
+
+  taskerProfile      TaskerProfile?
+  tasksPosted        Task[]              @relation("CustomerTasks")
+  bookings           Booking[]           @relation("TaskerBookings")
+  verificationTokens VerificationToken[]
+
+  payments         Payment[]      @relation("CustomerPayments")
+  payouts          Payout[]       @relation("TaskerPayouts")
+  payoutsProcessed Payout[]       @relation("PayoutProcessor")
+  reviewsWritten   Review[]       @relation("ReviewAuthor")
+  reviewsReceived  Review[]       @relation("ReviewSubject")
+  notifications    Notification[]
+  messagesSent     Message[]      @relation("MessageSender")
+  favorites        Favorite[]     @relation("CustomerFavorites")
+  favoritedBy      Favorite[]     @relation("TaskerFavoritedBy")
+
+  @@index([role])
+}
+
+model Favorite {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   User     @relation("CustomerFavorites", fields: [customerId], references: [id], onDelete: Cascade)
+  taskerId   String
+  tasker     User     @relation("TaskerFavoritedBy", fields: [taskerId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([customerId, taskerId])
+  @@index([customerId, createdAt])
+  @@index([taskerId])
+}
+
+model TaskerProfile {
+  id         String  @id @default(cuid())
+  userId     String  @unique
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bio        String?
+  hourlyRate Int     // whole currency units (e.g. dollars)
+  location   String?
+  // Geocoded service-area coordinates from Google Places Autocomplete.
+  latitude   Float?
+  longitude  Float?
+  skills     String[]
+
+  photoUrl   String?
+  idFrontUrl String?
+  idBackUrl  String?
+  selfieUrl  String?
+
+  verificationStatus      VerificationStatus @default(NOT_SUBMITTED)
+  verificationSubmittedAt DateTime?
+  verificationReviewedAt  DateTime?
+  verificationReviewerId  String?
+  verificationNote        String?
+
+  onboardingCompletedAt DateTime?
+
+  // Denormalized ratings; updated when a Review is written.
+  ratingAvg   Float @default(0)
+  ratingCount Int   @default(0)
+
+  // Default payout destination. Captured on the /payouts page; copied onto
+  // the Payout row when a request is created so historic records remain
+  // accurate if the tasker later changes their default.
+  payoutMethod          PayoutMethod?
+  payoutDestination     String?       // M-Pesa phone (E.164) or account number
+  payoutDestinationName String?       // bank name or account holder
+
+  // Weekly working hours as a typed JSON blob — see src/lib/availability.ts
+  // for the shape. Nullable means "available anytime" (default).
+  workingHours       Json?
+  availabilityBlocks AvailabilityBlock[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([verificationStatus])
+}
+
+model AvailabilityBlock {
+  id        String        @id @default(cuid())
+  profileId String
+  profile   TaskerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  // Inclusive day range. Stored as DateTime at 00:00 UTC of the day.
+  startDate DateTime
+  endDate   DateTime
+  reason    String?
+  createdAt DateTime      @default(now())
+
+  @@index([profileId, startDate])
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  slug      String   @unique  // e.g. "cleaning"
+  name      String                // e.g. "Cleaning"
+  emoji     String                // single emoji for cards/menus
+  group     String                // logical grouping for UI (e.g. "Home", "Logistics")
+  blurb     String?               // short description
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tasks Task[]
+
+  @@index([active, sortOrder])
+}
+
+model Task {
+  id          String     @id @default(cuid())
+  customerId  String
+  customer    User       @relation("CustomerTasks", fields: [customerId], references: [id], onDelete: Cascade)
+  title       String
+  description String
+  location    String
+  budget      Int          // store in cents (1 USD = 100)
+  status      TaskStatus @default(OPEN)
+
+  // When the customer would like the task done. Nullable = flexible timing.
+  scheduledFor DateTime?
+
+  // Geocoded coordinates (from Google Places Autocomplete). Nullable so
+  // legacy tasks without coordinates still work; new tasks always get them.
+  latitude  Float?
+  longitude Float?
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bookings Booking[]
+  images   TaskImage[]
+
+  @@index([status, createdAt])
+  @@index([categoryId, status])
+  @@index([scheduledFor])
+  // Compound index speeds up the bounding-box filter used for distance search.
+  @@index([latitude, longitude])
+}
+
+model TaskImage {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  url       String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([taskId, sortOrder])
+}
+
+model Booking {
+  id          String        @id @default(cuid())
+  taskId      String
+  task        Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskerId    String
+  tasker      User          @relation("TaskerBookings", fields: [taskerId], references: [id], onDelete: Cascade)
+  status      BookingStatus @default(PENDING)
+  scheduledAt DateTime?
+  message     String?
+
+  // Tasker's bid: their proposed price for the job (in cents, USD) and an
+  // estimate of how long it'll take. Nullable so historic bookings without a
+  // bid still work; for new offers we always require priceCents.
+  priceCents       Int?
+  estimatedMinutes Int?
+
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  payment Payment?
+  chat    Chat?
+  reviews Review[]
+
+  @@unique([taskId, taskerId])
+  @@index([taskerId, status])
+  @@index([status, createdAt])
+}
+
+model Payment {
+  id          String          @id @default(cuid())
+  bookingId   String          @unique
+  booking     Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  // The customer who pays. Stored explicitly so we can query without joins.
+  customerId  String
+  customer    User            @relation("CustomerPayments", fields: [customerId], references: [id], onDelete: Cascade)
+
+  amountCents     Int                       // total customer pays
+  platformFeeCents Int     @default(0)      // Qkazi's cut
+  currency        String  @default("KES")
+  status          PaymentStatus  @default(PENDING)
+  provider        PaymentProvider @default(STRIPE)
+
+  // External provider identifiers (e.g. Stripe Payment Intent id).
+  providerPaymentId  String? @unique
+  providerCustomerId String?
+  failureReason      String?
+
+  authorizedAt DateTime?
+  capturedAt   DateTime?
+  releasedAt   DateTime?
+  refundedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([customerId, createdAt])
+}
+
+model Review {
+  id        String @id @default(cuid())
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  authorId  String
+  author    User @relation("ReviewAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  subjectId String
+  subject   User @relation("ReviewSubject", fields: [subjectId], references: [id], onDelete: Cascade)
+
+  rating  Int    // 1-5; validate in app layer
+  comment String?
+
+  createdAt DateTime @default(now())
+
+  // One review per booking per author (one customer→tasker, one tasker→customer max).
+  @@unique([bookingId, authorId])
+  @@index([subjectId, createdAt])
+}
+
+model Chat {
+  id        String   @id @default(cuid())
+  bookingId String   @unique
+  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  createdAt     DateTime  @default(now())
+  lastMessageAt DateTime?
+
+  messages Message[]
+
+  @@index([lastMessageAt])
+}
+
+model Message {
+  id       String @id @default(cuid())
+  chatId   String
+  chat     Chat   @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  senderId String
+  sender   User   @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+
+  body   String
+  readAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([chatId, createdAt])
+}
+
+model Notification {
+  id     String           @id @default(cuid())
+  userId String
+  user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type   NotificationType
+
+  title String
+  body  String?
+  url   String?           // where the notification links to
+  // JSON for related entity ids, e.g. { taskId, bookingId, paymentId }.
+  data  Json?
+
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+}
+
+model Payout {
+  id               String       @id @default(cuid())
+  taskerId         String
+  tasker           User         @relation("TaskerPayouts", fields: [taskerId], references: [id], onDelete: Cascade)
+
+  amountCents      Int          // gross amount paid to the tasker
+  currency         String       @default("KES")
+  status           PayoutStatus @default(REQUESTED)
+  method           PayoutMethod @default(M_PESA)
+
+  // Where money goes. Snapshotted at request time.
+  destination      String       // E.164 phone or account number
+  destinationName  String?      // human-readable label
+
+  // External reference if processed via Pesapal disbursement (or manual ref).
+  providerPayoutId String?      @unique
+  reference        String?      // free-text ref the admin can record
+  failureReason    String?
+  notes            String?
+
+  requestedAt      DateTime     @default(now())
+  processedAt      DateTime?
+  // Admin user who marked it processed; null if processed by an API call.
+  processedById    String?
+  processedBy      User?        @relation("PayoutProcessor", fields: [processedById], references: [id])
+
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@index([taskerId, status])
+  @@index([status, requestedAt])
+}
+
+
+model PesapalIpn {
+  id        String   @id @default(cuid())
+  ipnId     String   @unique // returned by Pesapal
+  url       String
+  createdAt DateTime @default(now())
+}
+
+model VerificationToken {
+  id        String                @id @default(cuid())
+  userId    String
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String                @unique
+  type      VerificationTokenType
+  expiresAt DateTime
+  createdAt DateTime              @default(now())
+
+  @@index([userId, type])
+}

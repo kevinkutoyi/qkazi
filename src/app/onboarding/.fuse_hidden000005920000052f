@@ -1,0 +1,676 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
+import ImageUploader from "./ImageUploader";
+import PlacesAutocomplete, {
+  PlaceSelection,
+} from "@/components/PlacesAutocomplete";
+
+type VerificationStatus =
+  | "NOT_SUBMITTED"
+  | "PENDING"
+  | "APPROVED"
+  | "REJECTED";
+
+interface ProfileDraft {
+  photoUrl: string | null;
+  bio: string | null;
+  hourlyRate: number | null;
+  location: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  skills: string[];
+  idFrontUrl: string | null;
+  idBackUrl: string | null;
+  selfieUrl: string | null;
+  verificationStatus: VerificationStatus;
+  verificationNote: string | null;
+}
+
+interface InitialProfile {
+  photoUrl: string | null;
+  bio: string | null;
+  hourlyRate: number | null;
+  location: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  skills: string[];
+  idFrontUrl: string | null;
+  idBackUrl: string | null;
+  selfieUrl: string | null;
+  verificationStatus: VerificationStatus;
+  verificationNote: string | null;
+}
+
+const STEPS = [
+  { key: "basics", title: "Basics", blurb: "Photo and bio" },
+  { key: "work", title: "Work", blurb: "Rate and skills" },
+  { key: "location", title: "Location", blurb: "Service area" },
+  { key: "id", title: "ID check", blurb: "Verify your identity" },
+  { key: "review", title: "Review", blurb: "Submit for approval" },
+] as const;
+
+type StepKey = (typeof STEPS)[number]["key"];
+
+export default function Wizard({
+  userId,
+  initial,
+}: {
+  userId: string;
+  initial: InitialProfile;
+}) {
+  const router = useRouter();
+  const [profile, setProfile] = useState<ProfileDraft>({
+    photoUrl: initial.photoUrl,
+    bio: initial.bio,
+    hourlyRate: initial.hourlyRate,
+    location: initial.location,
+    latitude: initial.latitude,
+    longitude: initial.longitude,
+    skills: initial.skills ?? [],
+    idFrontUrl: initial.idFrontUrl,
+    idBackUrl: initial.idBackUrl,
+    selfieUrl: initial.selfieUrl,
+    verificationStatus: initial.verificationStatus,
+    verificationNote: initial.verificationNote,
+  });
+  const [stepIdx, setStepIdx] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [submitOk, setSubmitOk] = useState(false);
+
+  const step = STEPS[stepIdx];
+  const percent = Math.round(((stepIdx + 1) / STEPS.length) * 100);
+
+  const canContinue = useMemo(() => {
+    switch (step.key as StepKey) {
+      case "basics":
+        return Boolean(profile.photoUrl && profile.bio && profile.bio.trim());
+      case "work":
+        return Boolean(
+          profile.hourlyRate &&
+            profile.hourlyRate > 0 &&
+            profile.skills.length > 0,
+        );
+      case "location":
+        return Boolean(profile.location && profile.location.trim());
+      case "id":
+        return Boolean(profile.idFrontUrl && profile.selfieUrl);
+      case "review":
+        return true;
+    }
+  }, [profile, step.key]);
+
+  async function persist(patch: Partial<ProfileDraft>): Promise<boolean> {
+    setError(null);
+    setSaving(true);
+    try {
+      const body: Record<string, unknown> = {};
+      if ("bio" in patch) body.bio = patch.bio;
+      if ("hourlyRate" in patch) body.hourlyRate = patch.hourlyRate;
+      if ("location" in patch) body.location = patch.location;
+      if ("latitude" in patch) body.latitude = patch.latitude;
+      if ("longitude" in patch) body.longitude = patch.longitude;
+      if ("skills" in patch) body.skills = patch.skills;
+      if ("photoUrl" in patch) body.photoUrl = patch.photoUrl;
+      if ("idFrontUrl" in patch) body.idFrontUrl = patch.idFrontUrl;
+      if ("idBackUrl" in patch) body.idBackUrl = patch.idBackUrl;
+      if ("selfieUrl" in patch) body.selfieUrl = patch.selfieUrl;
+
+      const res = await fetch(`/api/taskers/${userId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? "Could not save");
+        return false;
+      }
+      return true;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function goNext() {
+    // Persist current step's slice; ImageUploader already persisted file URLs
+    // as they were uploaded, so for media-only steps we still want to save
+    // any sibling fields the user edited.
+    const slice: Partial<ProfileDraft> = {};
+    switch (step.key as StepKey) {
+      case "basics":
+        slice.bio = profile.bio;
+        break;
+      case "work":
+        slice.hourlyRate = profile.hourlyRate ?? undefined;
+        slice.skills = profile.skills;
+        break;
+      case "location":
+        slice.location = profile.location;
+        slice.latitude = profile.latitude;
+        slice.longitude = profile.longitude;
+        break;
+      case "id":
+        // ID URLs already persisted by ImageUploader.
+        break;
+      case "review":
+        return submit();
+    }
+    if (Object.keys(slice).length > 0) {
+      const ok = await persist(slice);
+      if (!ok) return;
+    }
+    setStepIdx((i) => Math.min(STEPS.length - 1, i + 1));
+  }
+
+  function goBack() {
+    setStepIdx((i) => Math.max(0, i - 1));
+  }
+
+  async function submit() {
+    setError(null);
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/taskers/${userId}/verification`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error ?? "Could not submit for review");
+        return;
+      }
+      setSubmitOk(true);
+      setProfile((p) => ({ ...p, verificationStatus: "PENDING" }));
+      router.refresh();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (submitOk) {
+    return (
+      <div className="mx-auto max-w-md text-center">
+        <div className="mx-auto inline-flex h-12 w-12 items-center justify-center rounded-full bg-brand-100 text-2xl">
+          ✅
+        </div>
+        <h1 className="mt-4 text-2xl font-bold">Submitted for review</h1>
+        <p className="mt-2 text-sm text-gray-600">
+          Thanks! An admin will review your profile and ID documents shortly.
+          You&apos;ll get an email when the decision is in. In the meantime, you
+          can still browse open tasks.
+        </p>
+        <div className="mt-6 flex flex-col gap-2">
+          <a href="/dashboard" className="btn-primary">
+            Go to dashboard
+          </a>
+          <a href="/tasks" className="btn-secondary">
+            Browse tasks
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-2xl">
+      <header className="mb-6">
+        <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+          Tasker onboarding
+        </p>
+        <h1 className="mt-1 text-2xl font-bold">{step.title}</h1>
+        <p className="text-sm text-gray-600">{step.blurb}</p>
+
+        <div className="mt-4">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
+            <div
+              className="h-full bg-brand-600 transition-all"
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+          <ol className="mt-3 grid grid-cols-5 gap-1 text-[10px] text-gray-500 sm:text-xs">
+            {STEPS.map((s, i) => (
+              <li
+                key={s.key}
+                className={
+                  i === stepIdx
+                    ? "font-semibold text-brand-700"
+                    : i < stepIdx
+                      ? "text-gray-700"
+                      : ""
+                }
+              >
+                {i + 1}. {s.title}
+              </li>
+            ))}
+          </ol>
+        </div>
+
+        {profile.verificationStatus === "REJECTED" &&
+        profile.verificationNote ? (
+          <div className="mt-4 rounded-md border border-red-100 bg-red-50 p-3 text-sm text-red-800">
+            <strong>Previous submission was rejected.</strong>{" "}
+            {profile.verificationNote} Please update and resubmit.
+          </div>
+        ) : null}
+      </header>
+
+      <section className="card p-6">
+        {step.key === "basics" ? (
+          <BasicsStep
+            profile={profile}
+            onChange={setProfile}
+            userId={userId}
+          />
+        ) : step.key === "work" ? (
+          <WorkStep profile={profile} onChange={setProfile} />
+        ) : step.key === "location" ? (
+          <LocationStep profile={profile} onChange={setProfile} />
+        ) : step.key === "id" ? (
+          <IdStep profile={profile} onChange={setProfile} userId={userId} />
+        ) : (
+          <ReviewStep profile={profile} />
+        )}
+
+        {error ? (
+          <p className="mt-4 text-sm text-red-600">{error}</p>
+        ) : null}
+
+        <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
+          <button
+            type="button"
+            onClick={goBack}
+            disabled={stepIdx === 0 || saving}
+            className="btn-secondary"
+          >
+            Back
+          </button>
+          <button
+            type="button"
+            onClick={goNext}
+            disabled={!canContinue || saving}
+            className="btn-primary"
+          >
+            {saving
+              ? "Saving…"
+              : step.key === "review"
+                ? "Submit for review"
+                : "Continue"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/* --------------------------- Steps --------------------------- */
+
+function BasicsStep({
+  profile,
+  onChange,
+  userId,
+}: {
+  profile: ProfileDraft;
+  onChange: (p: ProfileDraft) => void;
+  userId: string;
+}) {
+  return (
+    <div className="space-y-5">
+      <div>
+        <label className="label">Profile photo</label>
+        <p className="text-xs text-gray-500">
+          A clear, well-lit photo of your face. Customers see this on your
+          listing.
+        </p>
+        <div className="mt-2">
+          <ImageUploader
+            currentUrl={profile.photoUrl}
+            purpose="photo"
+            userId={userId}
+            shape="circle"
+            label="Upload photo"
+            onUploaded={(url) => onChange({ ...profile, photoUrl: url })}
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="label" htmlFor="bio">
+          Short bio
+        </label>
+        <p className="text-xs text-gray-500">
+          A couple of sentences about your experience and what you love doing.
+        </p>
+        <textarea
+          id="bio"
+          className="input mt-2 min-h-[120px]"
+          maxLength={1000}
+          value={profile.bio ?? ""}
+          onChange={(e) => onChange({ ...profile, bio: e.target.value })}
+        />
+        <p className="mt-1 text-xs text-gray-400">
+          {(profile.bio ?? "").length}/1000
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function WorkStep({
+  profile,
+  onChange,
+}: {
+  profile: ProfileDraft;
+  onChange: (p: ProfileDraft) => void;
+}) {
+  const [skillInput, setSkillInput] = useState("");
+
+  function addSkill() {
+    const value = skillInput.trim();
+    if (!value) return;
+    if (profile.skills.includes(value)) return;
+    onChange({ ...profile, skills: [...profile.skills, value] });
+    setSkillInput("");
+  }
+
+  function removeSkill(s: string) {
+    onChange({ ...profile, skills: profile.skills.filter((x) => x !== s) });
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <label className="label" htmlFor="rate">
+          Hourly rate (USD)
+        </label>
+        <p className="text-xs text-gray-500">
+          You can change this any time. Most local taskers charge $15–$40/hr.
+        </p>
+        <input
+          id="rate"
+          type="number"
+          min={1}
+          step={1}
+          className="input mt-2"
+          value={profile.hourlyRate ?? ""}
+          onChange={(e) =>
+            onChange({
+              ...profile,
+              hourlyRate: e.target.value ? Number(e.target.value) : null,
+            })
+          }
+        />
+      </div>
+
+      <div>
+        <label className="label" htmlFor="skill">
+          Skills
+        </label>
+        <p className="text-xs text-gray-500">
+          Add at least one. Press Enter or click Add for each.
+        </p>
+        <div className="mt-2 flex gap-2">
+          <input
+            id="skill"
+            className="input"
+            value={skillInput}
+            onChange={(e) => setSkillInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addSkill();
+              }
+            }}
+            placeholder="e.g. Plumbing"
+          />
+          <button
+            type="button"
+            onClick={addSkill}
+            className="btn-secondary shrink-0"
+          >
+            Add
+          </button>
+        </div>
+        {profile.skills.length > 0 ? (
+          <ul className="mt-3 flex flex-wrap gap-2">
+            {profile.skills.map((s) => (
+              <li
+                key={s}
+                className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-3 py-1 text-sm text-brand-700"
+              >
+                {s}
+                <button
+                  type="button"
+                  onClick={() => removeSkill(s)}
+                  aria-label={`Remove ${s}`}
+                  className="text-brand-700/70 hover:text-brand-900"
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function LocationStep({
+  profile,
+  onChange,
+}: {
+  profile: ProfileDraft;
+  onChange: (p: ProfileDraft) => void;
+}) {
+  function handlePlace(p: PlaceSelection | null) {
+    if (p) {
+      onChange({
+        ...profile,
+        location: p.formatted,
+        latitude: p.latitude,
+        longitude: p.longitude,
+      });
+    } else {
+      onChange({ ...profile, latitude: null, longitude: null });
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <label className="label" htmlFor="location">
+          Where do you work?
+        </label>
+        <p className="text-xs text-gray-500">
+          City or neighborhood. Customers see this when comparing taskers.
+        </p>
+        <div className="mt-2">
+          <PlacesAutocomplete
+            id="location"
+            initialValue={profile.location ?? ""}
+            initialLat={profile.latitude}
+            initialLng={profile.longitude}
+            placeholder="e.g. Westlands, Nairobi"
+            onSelect={handlePlace}
+          />
+        </div>
+        <p className="mt-2 text-xs text-gray-500">
+          {profile.latitude != null && profile.longitude != null
+            ? "Pinned — you'll appear in customers' distance searches."
+            : "Pick a result from the suggestions to get pinned on the map."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function IdStep({
+  profile,
+  onChange,
+  userId,
+}: {
+  profile: ProfileDraft;
+  onChange: (p: ProfileDraft) => void;
+  userId: string;
+}) {
+  return (
+    <div className="space-y-6">
+      <div className="rounded-md border border-yellow-100 bg-yellow-50 p-3 text-xs text-yellow-900">
+        Your ID documents are only used to verify your identity. They are not
+        shown to customers.
+      </div>
+
+      <div>
+        <label className="label">Government ID — front</label>
+        <p className="text-xs text-gray-500">
+          National ID, driver&apos;s license, or passport. Make sure all four
+          corners are visible and text is readable.
+        </p>
+        <div className="mt-2">
+          <ImageUploader
+            currentUrl={profile.idFrontUrl}
+            purpose="id_front"
+            userId={userId}
+            shape="card"
+            label="Upload ID front"
+            onUploaded={(url) => onChange({ ...profile, idFrontUrl: url })}
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="label">
+          Government ID — back{" "}
+          <span className="text-gray-400">(optional for passports)</span>
+        </label>
+        <div className="mt-2">
+          <ImageUploader
+            currentUrl={profile.idBackUrl}
+            purpose="id_back"
+            userId={userId}
+            shape="card"
+            label="Upload ID back"
+            onUploaded={(url) => onChange({ ...profile, idBackUrl: url })}
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="label">Selfie holding your ID</label>
+        <p className="text-xs text-gray-500">
+          A photo of you holding the same ID next to your face.
+        </p>
+        <div className="mt-2">
+          <ImageUploader
+            currentUrl={profile.selfieUrl}
+            purpose="selfie"
+            userId={userId}
+            shape="card"
+            label="Upload selfie with ID"
+            onUploaded={(url) => onChange({ ...profile, selfieUrl: url })}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReviewStep({ profile }: { profile: ProfileDraft }) {
+  return (
+    <div className="space-y-4 text-sm">
+      <p className="text-gray-600">
+        Double-check everything below, then submit for review.
+      </p>
+
+      <div className="grid grid-cols-[88px_1fr] gap-x-4 gap-y-3">
+        <div className="text-gray-500">Photo</div>
+        <div>
+          {profile.photoUrl ? (
+            <img
+              src={profile.photoUrl}
+              alt="Profile preview"
+              className="h-20 w-20 rounded-full object-cover"
+            />
+          ) : (
+            <span className="text-red-600">Not uploaded</span>
+          )}
+        </div>
+
+        <div className="text-gray-500">Bio</div>
+        <div className="whitespace-pre-line">
+          {profile.bio || (
+            <span className="text-red-600">Not provided</span>
+          )}
+        </div>
+
+        <div className="text-gray-500">Rate</div>
+        <div>
+          {profile.hourlyRate ? (
+            `KSh ${profile.hourlyRate}/hr`
+          ) : (
+            <span className="text-red-600">Not provided</span>
+          )}
+        </div>
+
+        <div className="text-gray-500">Skills</div>
+        <div>
+          {profile.skills.length > 0 ? (
+            <ul className="flex flex-wrap gap-1">
+              {profile.skills.map((s) => (
+                <li
+                  key={s}
+                  className="inline-flex rounded-full bg-brand-50 px-2 py-0.5 text-xs text-brand-700"
+                >
+                  {s}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <span className="text-red-600">None added</span>
+          )}
+        </div>
+
+        <div className="text-gray-500">Location</div>
+        <div>
+          {profile.location || (
+            <span className="text-red-600">Not provided</span>
+          )}
+        </div>
+
+        <div className="text-gray-500">ID front</div>
+        <div>
+          {profile.idFrontUrl ? (
+            <span className="text-brand-700">✓ Uploaded</span>
+          ) : (
+            <span className="text-red-600">Missing</span>
+          )}
+        </div>
+
+        <div className="text-gray-500">ID back</div>
+        <div>
+          {profile.idBackUrl ? (
+            <span className="text-brand-700">✓ Uploaded</span>
+          ) : (
+            <span className="text-gray-500">Skipped (passport)</span>
+          )}
+        </div>
+
+        <div className="text-gray-500">Selfie</div>
+        <div>
+          {profile.selfieUrl ? (
+            <span className="text-brand-700">✓ Uploaded</span>
+          ) : (
+            <span className="text-red-600">Missing</span>
+          )}
+        </div>
+      </div>
+
+      <p className="text-xs text-gray-500">
+        Submitting locks editing while an admin reviews. Most decisions arrive
+        within 24 hours.
+      </p>
+    </div>
+  );
+}
