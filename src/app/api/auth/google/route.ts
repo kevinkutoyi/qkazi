@@ -40,6 +40,3 @@ export async function GET(req: Request) {
   });
   return res;
 }
-
-export const STATE_COOKIE_NAME = STATE_COOKIE;
-export const ROLE_COOKIE_NAME = ROLE_COOKIE;
