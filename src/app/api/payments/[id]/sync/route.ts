@@ -77,7 +77,7 @@ export async function POST(
     await prisma.payment.update({ where: { id: payment.id }, data });
 
     // Ping the tasker when funds capture or release.
-    let finalStatus = next;
+    let finalStatus: PaymentStatus = next;
     if (
       next === PaymentStatus.CAPTURED &&
       payment.booking.status === BookingStatus.COMPLETED

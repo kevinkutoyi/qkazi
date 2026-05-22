@@ -586,11 +586,13 @@ async function TaskerDashboard({
   );
   const recentBookings = bookings
     .filter((b) =>
-      [
-        BookingStatus.COMPLETED,
-        BookingStatus.DECLINED,
-        BookingStatus.CANCELLED,
-      ].includes(b.status),
+      (
+        [
+          BookingStatus.COMPLETED,
+          BookingStatus.DECLINED,
+          BookingStatus.CANCELLED,
+        ] as BookingStatus[]
+      ).includes(b.status),
     )
     .slice(0, 4);
 

@@ -4,6 +4,7 @@ import {
   BookingStatus,
   NotificationType,
   PaymentStatus,
+  Prisma,
   Role,
   TaskStatus,
 } from "@prisma/client";
@@ -99,7 +100,10 @@ export async function PATCH(
       select: { id: true },
     });
 
-    const ops = [
+    // Heterogeneous transaction (booking + task, optionally payment), so the
+    // array is typed as PrismaPromise<unknown>[] and the booking result is
+    // cast back to its concrete type.
+    const ops: Prisma.PrismaPromise<unknown>[] = [
       prisma.booking.update({
         where: { id: booking.id },
         data: { status: BookingStatus.COMPLETED },
@@ -121,8 +125,8 @@ export async function PATCH(
       );
     }
 
-    const [u] = await prisma.$transaction(ops);
-    updated = u;
+    const results = await prisma.$transaction(ops);
+    updated = results[0] as Awaited<ReturnType<typeof prisma.booking.update>>;
   } else {
     updated = await prisma.booking.update({
       where: { id: booking.id },
