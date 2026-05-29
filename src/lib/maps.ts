@@ -40,36 +40,22 @@ export function loadGoogleMaps(
 
   window.__qkaziMapsPromise = new Promise<typeof google>((resolve, reject) => {
     const script = document.createElement("script");
+    // Classic (non-async) loader: when `loading=async` is omitted, the script
+    // synchronously loads all libraries listed in `libraries=` before firing
+    // `onload`, so `google.maps.places.Autocomplete` is guaranteed to exist
+    // by the time we resolve. `importLibrary` only exists on the newer inline
+    // bootstrap, which we don't use.
     const params = new URLSearchParams({
       key,
       libraries: libraries.join(","),
       v: "weekly",
-      loading: "async",
     });
     script.src = `https://maps.googleapis.com/maps/api/js?${params.toString()}`;
     script.async = true;
     script.defer = true;
-    script.onload = async () => {
-      if (!window.google?.maps) {
-        reject(new Error("Maps script loaded but window.google missing"));
-        return;
-      }
-      try {
-        // With loading=async, the bootstrap script fires onload before the
-        // requested libraries (places, geometry, marker) are ready. We must
-        // await importLibrary for each one so callers can rely on e.g.
-        // google.maps.places.Autocomplete existing.
-        await Promise.all(
-          libraries.map((lib) =>
-            (window.google!.maps as unknown as {
-              importLibrary: (name: string) => Promise<unknown>;
-            }).importLibrary(lib),
-          ),
-        );
-        resolve(window.google!);
-      } catch (err) {
-        reject(err instanceof Error ? err : new Error(String(err)));
-      }
+    script.onload = () => {
+      if (window.google?.maps) resolve(window.google);
+      else reject(new Error("Maps script loaded but window.google missing"));
     };
     script.onerror = () =>
       reject(new Error("Failed to load Google Maps JS API"));
