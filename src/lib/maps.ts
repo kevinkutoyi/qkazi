@@ -49,9 +49,27 @@ export function loadGoogleMaps(
     script.src = `https://maps.googleapis.com/maps/api/js?${params.toString()}`;
     script.async = true;
     script.defer = true;
-    script.onload = () => {
-      if (window.google?.maps) resolve(window.google);
-      else reject(new Error("Maps script loaded but window.google missing"));
+    script.onload = async () => {
+      if (!window.google?.maps) {
+        reject(new Error("Maps script loaded but window.google missing"));
+        return;
+      }
+      try {
+        // With loading=async, the bootstrap script fires onload before the
+        // requested libraries (places, geometry, marker) are ready. We must
+        // await importLibrary for each one so callers can rely on e.g.
+        // google.maps.places.Autocomplete existing.
+        await Promise.all(
+          libraries.map((lib) =>
+            (window.google!.maps as unknown as {
+              importLibrary: (name: string) => Promise<unknown>;
+            }).importLibrary(lib),
+          ),
+        );
+        resolve(window.google!);
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
     };
     script.onerror = () =>
       reject(new Error("Failed to load Google Maps JS API"));
