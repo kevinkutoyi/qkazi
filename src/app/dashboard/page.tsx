@@ -10,6 +10,7 @@ import {
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { profileCompleteness } from "@/lib/profile";
+import { formatMoney, DEFAULT_CURRENCY } from "@/lib/money";
 import TaskCard from "@/components/TaskCard";
 
 export const dynamic = "force-dynamic";
@@ -235,12 +236,14 @@ async function CustomerDashboard({
                         <p className="text-sm font-semibold text-gray-900">
                           KSh {b.task.budget}
                         </p>
-                        <Link
-                          href={`/checkout/${b.id}`}
-                          className="btn-primary mt-2 inline-flex text-xs"
-                        >
-                          Pay now
-                        </Link>
+                        {b.id ? (
+                          <Link
+                            href={`/checkout/${b.id}`}
+                            className="btn-primary mt-2 inline-flex text-xs"
+                          >
+                            Pay now
+                          </Link>
+                        ) : null}
                       </div>
                     </div>
                   </li>
@@ -261,19 +264,21 @@ async function CustomerDashboard({
                       </div>
                       <div className="text-right">
                         <p className="text-sm font-semibold text-gray-900">
-                          ${(p.amountCents / 100).toFixed(2)}
+                          {formatMoney(p.amountCents, p.currency ?? DEFAULT_CURRENCY)}
                         </p>
                         <span className="badge mt-1 bg-yellow-100 text-yellow-800">
                           {p.status === PaymentStatus.AUTHORIZED
                             ? "Awaiting capture"
                             : "Awaiting payment"}
                         </span>
-                        <Link
-                          href={`/checkout/${p.booking.id}`}
-                          className="btn-primary mt-2 inline-flex text-xs"
-                        >
-                          Resume payment
-                        </Link>
+                        {p.booking?.id ? (
+                          <Link
+                            href={`/checkout/${p.booking.id}`}
+                            className="btn-primary mt-2 inline-flex text-xs"
+                          >
+                            Resume payment
+                          </Link>
+                        ) : null}
                       </div>
                     </div>
                   </li>
