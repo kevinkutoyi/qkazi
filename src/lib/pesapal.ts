@@ -121,6 +121,21 @@ async function pesapalFetch<T>(
       `Pesapal ${path} failed: ${res.status} ${typeof data === "object" ? JSON.stringify(data) : text}`,
     );
   }
+  // Pesapal frequently returns HTTP 200 with a body shaped like
+  //   { status: "500", error: { error_type, code, message } }
+  // instead of a proper non-2xx. Treat that as an error too so callers
+  // don't silently get undefined fields back.
+  if (data && typeof data === "object") {
+    const obj = data as Record<string, unknown>;
+    const status = typeof obj.status === "string" ? obj.status : null;
+    const hasError =
+      obj.error != null &&
+      typeof obj.error === "object" &&
+      Object.keys(obj.error as object).length > 0;
+    if (hasError || (status && status !== "200")) {
+      throw new Error(`Pesapal ${path} returned error: ${JSON.stringify(data)}`);
+    }
+  }
   return data as T;
 }
 

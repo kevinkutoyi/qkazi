@@ -135,6 +135,27 @@ export async function POST(req: Request) {
     return jsonError("Couldn't start payment. Try again in a moment.", 502);
   }
 
+  // Belt-and-suspenders: even if pesapalFetch decides the response was a
+  // success, refuse to send the client a missing redirect URL (that would
+  // cause window.location.assign(undefined) → /checkout/undefined).
+  if (!pesapalRes.redirect_url) {
+    console.error(
+      "[pesapal] submitOrder returned no redirect_url:",
+      pesapalRes,
+    );
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        status: PaymentStatus.FAILED,
+        failureReason: "Pesapal did not return a redirect URL",
+      },
+    });
+    return jsonError(
+      "Pesapal didn't return a payment page. Try again in a moment.",
+      502,
+    );
+  }
+
   await prisma.payment.update({
     where: { id: payment.id },
     data: { providerPaymentId: pesapalRes.order_tracking_id },

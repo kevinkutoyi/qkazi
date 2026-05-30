@@ -20,6 +20,12 @@ export default function CheckoutButton({ bookingId }: { bookingId: string }) {
         setError(data.error ?? "Could not start payment");
         return;
       }
+      if (!data.redirectUrl || typeof data.redirectUrl !== "string") {
+        setError(
+          "Pesapal didn't return a payment URL. Try again, or contact support if this keeps happening.",
+        );
+        return;
+      }
       // Full-page navigation to Pesapal's hosted page.
       window.location.assign(data.redirectUrl);
     } catch {
